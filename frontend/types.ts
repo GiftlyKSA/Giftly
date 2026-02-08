@@ -31,14 +31,13 @@ export interface Order {
 export interface Message {
   id: string;
   text: string;
-  sender: 'user' | 'other';
+  sender: 'customer' | 'courier';
   time: string;
   isInvoice?: boolean;
   invoiceData?: {
     description: string;
     giftPrice: number;
     serviceFee: number;
-    deliveryFee: number;
     total: number;
   };
 }

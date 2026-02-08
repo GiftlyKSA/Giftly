@@ -1,10 +1,10 @@
 
-import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Dimensions, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet, Dimensions, Alert, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../App';
-import { createOrder } from '../api';
+import { createOrder, getCities, CityResponse } from '../api';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -14,32 +14,33 @@ interface Props {
   orderData?: { description?: string; deliveryDate?: Date };
 }
 
-const CITIES = [
-  { id: '1', name: 'الرياض', icon: '🏙️' },
-  { id: '2', name: 'جدة', icon: '🌊' },
-  { id: '3', name: 'مكة المكرمة', icon: '🕋' },
-  { id: '4', name: 'المدينة المنورة', icon: '🕌' },
-  { id: '5', name: 'الدمام', icon: '⚓' },
-  { id: '6', name: 'الخبر', icon: '🌉' },
-  { id: '7', name: 'الظهران', icon: '🛢️' },
-  { id: '8', name: 'الطائف', icon: '🌹' },
-  { id: '9', name: 'أبها', icon: '⛰️' },
-  { id: '10', name: 'خميس مشيط', icon: '🦅' },
-  { id: '11', name: 'تبوك', icon: '❄️' },
-  { id: '12', name: 'حائل', icon: '🍲' },
-  { id: '13', name: 'بريدة', icon: '🌴' },
-  { id: '14', name: 'عنيزة', icon: '🏺' },
-  { id: '15', name: 'جازان', icon: '☕' },
-  { id: '16', name: 'نجران', icon: '🏰' },
-  { id: '17', name: 'الباحة', icon: '🌲' },
-  { id: '18', name: 'سكاكا', icon: '🫒' },
-];
-
 export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData }) => {
   const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState('');
   const [loading, setLoading] = useState(false);
+  const [cities, setCities] = useState<CityResponse[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(true);
+  const [citiesError, setCitiesError] = useState<string | null>(null);
   const { token } = useAuth();
+
+  // Fetch cities on component mount
+  useEffect(() => {
+    const fetchCities = async () => {
+      try {
+        setCitiesLoading(true);
+        setCitiesError(null);
+        const fetchedCities = await getCities();
+        setCities(fetchedCities);
+      } catch (error) {
+        console.error('Failed to fetch cities:', error);
+        setCitiesError('فشل في تحميل المدن');
+      } finally {
+        setCitiesLoading(false);
+      }
+    };
+
+    fetchCities();
+  }, []);
 
   const handleConfirm = async () => {
     console.log('CitySelectionScreen: Starting order creation');
@@ -84,21 +85,45 @@ export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData
         <View style={styles.spacer} />
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.grid}>
-        {CITIES.map((city) => (
+      {citiesLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#E0AAFF" />
+          <Text style={styles.loadingText}>جاري تحميل المدن...</Text>
+        </View>
+      ) : citiesError ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{citiesError}</Text>
           <Pressable
-            key={city.id}
-            onPress={() => setSelected(city.id)}
-            style={[
-              styles.cityButton,
-              selected === city.id && styles.selectedCityButton,
-            ]}
+            onPress={() => {
+              setCitiesLoading(true);
+              setCitiesError(null);
+              getCities()
+                .then(setCities)
+                .catch(() => setCitiesError('فشل في تحميل المدن'))
+                .finally(() => setCitiesLoading(false));
+            }}
+            style={styles.retryButton}
           >
-            <Text style={styles.cityIcon}>{city.icon}</Text>
-            <Text style={[styles.cityName, selected === city.id && styles.selectedCityName]}>{city.name}</Text>
+            <Text style={styles.retryText}>إعادة المحاولة</Text>
           </Pressable>
-        ))}
-      </ScrollView>
+        </View>
+      ) : (
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.grid}>
+          {cities.map((city) => (
+            <Pressable
+              key={city.id}
+              onPress={() => setSelected(city.id.toString())}
+              style={[
+                styles.cityButton,
+                selected === city.id.toString() && styles.selectedCityButton,
+              ]}
+            >
+              <Text style={styles.cityIcon}>{city.icon || '🏙️'}</Text>
+              <Text style={[styles.cityName, selected === city.id.toString() && styles.selectedCityName]}>{city.name}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
 
       <View style={styles.bottomContainer}>
         <Pressable
@@ -223,5 +248,39 @@ const styles = StyleSheet.create({
     fontSize: screenWidth * 0.045,
     fontWeight: '900',
     color: 'white',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#EF4444',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    backgroundColor: '#E0AAFF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

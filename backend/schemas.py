@@ -201,7 +201,8 @@ class CreateConversationRequest(BaseModel):
 class ConversationResponse(BaseModel):
     id: int
     customer_id: int
-    courier_id: int
+    courier_id: Optional[int]
+    order_id: int
     status: str
     created_at: datetime
 
@@ -232,3 +233,110 @@ class MessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# Wallet schemas
+class WalletResponse(BaseModel):
+    id: int
+    user_id: int
+    balance: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CreateWallet(BaseModel):
+    user_id: int
+    balance: Optional[int] = 0
+
+class UpdateWalletBalance(BaseModel):
+    amount: int  # Positive for deposit, negative for withdrawal
+
+# Payment schemas
+class PaymentMethodEnum(str, Enum):
+    WALLET = "wallet"
+    CREDIT_CARD = "credit_card"
+    APPLE_PAY = "apple_pay"
+    MADA = "mada"
+
+class PaymentStatusEnum(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+class PaymentResponse(BaseModel):
+    id: int
+    invoice_id: int
+    user_id: int
+    amount: int
+    payment_method: PaymentMethodEnum
+    status: PaymentStatusEnum
+    transaction_id: Optional[str]
+    payment_date: Optional[datetime]
+    payment_details: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CreatePayment(BaseModel):
+    invoice_id: int
+    user_id: int
+    amount: int
+    payment_method: PaymentMethodEnum
+    transaction_id: Optional[str] = None
+    payment_details: Optional[str] = None
+
+class UpdatePaymentStatus(BaseModel):
+    status: PaymentStatusEnum
+    transaction_id: Optional[str] = None
+    payment_date: Optional[datetime] = None
+
+# Promocode schemas
+class PromocodeResponse(BaseModel):
+    id: int
+    name: str
+    code: str
+    description: Optional[str]
+    percentage: int
+    max_value: int
+    minimum_order_value: int
+    usage_limit: int
+    usage_count: int
+    valid_until: datetime
+    active: bool
+    applicable_to: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CreatePromocode(BaseModel):
+    name: str
+    code: str
+    description: Optional[str] = None
+    percentage: int
+    max_value: Optional[int] = 0
+    minimum_order_value: Optional[int] = 0
+    usage_limit: Optional[int] = 0
+    valid_until: datetime
+    active: Optional[bool] = True
+    applicable_to: str = "order_total"
+
+class UpdatePromocode(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    percentage: Optional[int] = None
+    max_value: Optional[int] = None
+    minimum_order_value: Optional[int] = None
+    usage_limit: Optional[int] = None
+    valid_until: Optional[datetime] = None
+    active: Optional[bool] = None
+    applicable_to: Optional[str] = None
+
+class ApplyPromocodeRequest(BaseModel):
+    code: str
+    order_total: int

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, Pressable, ScrollView, TextInput, StyleSheet, Image, Modal } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,22 +48,22 @@ export const CourierChatScreen: React.FC<Props> = ({ userRole, onBack, onFinishO
   ]);
   const [input, setInput] = useState('');
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     if (!input.trim()) return;
-    setMessages([...messages, { id: Date.now().toString(), text: input, sender: 'user', time: 'الآن' }]);
+    setMessages(prev => [...prev, { id: Date.now().toString(), text: input, sender: 'user', time: 'الآن' }]);
     setInput('');
-  };
+  }, [input]);
 
-  const handleAttachImage = () => {
-    setMessages([...messages, {
+  const handleAttachImage = useCallback(() => {
+    setMessages(prev => [...prev, {
       id: Date.now().toString(),
       text: "تم إرفاق صورة للهدية المطلوبة 📸",
       sender: 'user',
       time: 'الآن'
     }]);
-  };
+  }, []);
 
-  const handleIssueInvoice = () => {
+  const handleIssueInvoice = useCallback(() => {
     const gp = parseFloat(giftPrice) || 0;
     const sf = parseFloat(serviceFee) || 0;
     const df = parseFloat(deliveryFee) || 0;
@@ -85,7 +85,7 @@ export const CourierChatScreen: React.FC<Props> = ({ userRole, onBack, onFinishO
         total: total
       }
     };
-    setMessages([...messages, invoiceMsg]);
+    setMessages(prev => [...prev, invoiceMsg]);
     setIsInvoiceSent(true);
     setShowInvoiceModal(false);
 
@@ -93,7 +93,7 @@ export const CourierChatScreen: React.FC<Props> = ({ userRole, onBack, onFinishO
     setGiftPrice('');
     setServiceFee('');
     setDeliveryFee('');
-  };
+  }, [invoiceDesc, giftPrice, serviceFee, deliveryFee]);
 
   return (
     <View style={styles.container}>

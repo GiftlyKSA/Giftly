@@ -156,3 +156,22 @@ def get_user_conversations(
     ).order_by(desc(Conversation.created_at)).all()
 
     return conversations
+
+@router.get("/conversations/by-order/{order_id}", response_model=ConversationResponse)
+def get_conversation_by_order(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_sync)
+):
+    """
+    Get conversation for a specific order. Only participants can access it.
+    """
+    conversation = db.query(Conversation).filter(Conversation.order_id == order_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check authorization - user must be customer or courier for this order
+    if current_user.id not in [conversation.customer_id, conversation.courier_id]:
+        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+
+    return conversation

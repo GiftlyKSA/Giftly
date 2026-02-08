@@ -1,6 +1,6 @@
 from sqladmin import Admin, ModelView
 from database import engine
-from models import User, City, Order, Invoice, Conversation, Message
+from models import User, City, Order, Invoice, Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus, Promocode
 from auth import verify_password
 from sqlalchemy.orm import Session
 from database import AsyncSessionLocal as SessionLocal
@@ -10,10 +10,9 @@ from wtforms import DateField
 from datetime import date
 
 class UserAdmin(ModelView, model=User):
-    column_list = [User.id, User.phone_number, User.email, User.name, User.date_of_birth, User.is_verified, User.otp, User.otp_created_at, User.is_admin, User.role, User.admin_username, User.admin_password_hash, User.city_id]
+    column_list = [User.id, User.phone_number, User.email, User.name, User.date_of_birth, User.is_verified, User.otp, User.otp_created_at, User.is_admin, User.role, User.admin_username, User.admin_password_hash, User.city]
     column_searchable_list = [User.phone_number, User.email, User.name]
     column_filters = [User.is_verified, User.role, User.is_admin]
-    form_columns = [User.phone_number, User.email, User.name, User.date_of_birth, User.is_verified, User.otp, User.is_admin, User.role, User.admin_username, User.admin_password_hash, User.city_id]
 
     column_choices = {
         User.role: {
@@ -38,13 +37,11 @@ class CityAdmin(ModelView, model=City):
     column_list = [City.id, City.name, City.icon, City.active]
     column_searchable_list = [City.name]
     column_filters = [City.active]
-    form_columns = [City.name, City.icon, City.active]
 
 class OrderAdmin(ModelView, model=Order):
-    column_list = [Order.id, Order.order_id, Order.created_by_user_id, Order.assigned_to_user_id, Order.description, Order.creation_date, Order.delivery_date, Order.status, Order.comments, Order.updated_at, Order.city_id]
+    column_list = [Order.id, Order.order_id, Order.created_by_user, Order.assigned_to_user, Order.description, Order.creation_date, Order.delivery_date, Order.status, Order.comments, Order.updated_at, Order.city]
     column_searchable_list = [Order.order_id, Order.description]
-    column_filters = [Order.status, Order.city_id]
-    form_columns = [Order.order_id, Order.created_by_user_id, Order.assigned_to_user_id, Order.description, Order.delivery_date, Order.status, Order.comments, Order.city_id]
+    column_filters = [Order.status, Order.city]
 
     column_choices = {
         Order.status: {
@@ -59,10 +56,9 @@ class OrderAdmin(ModelView, model=Order):
     }
 
 class InvoiceAdmin(ModelView, model=Invoice):
-    column_list = [Invoice.id, Invoice.invoice_id, Invoice.order_id, Invoice.full_amount, Invoice.service_fee, Invoice.order_only_price, Invoice.courier_fee, Invoice.status, Invoice.description, Invoice.comment, Invoice.sent_to_user_via_email, Invoice.sent_at, Invoice.due_date, Invoice.tax_amount, Invoice.discount_amount, Invoice.created_at, Invoice.updated_at]
+    column_list = [Invoice.id, Invoice.invoice_id, Invoice.order, Invoice.full_amount, Invoice.service_fee, Invoice.order_only_price, Invoice.courier_fee, Invoice.status, Invoice.description, Invoice.comment, Invoice.sent_to_user_via_email, Invoice.sent_at, Invoice.due_date, Invoice.tax_amount, Invoice.discount_amount, Invoice.promocode, Invoice.created_at, Invoice.updated_at]
     column_searchable_list = [Invoice.invoice_id]
     column_filters = [Invoice.status, Invoice.sent_to_user_via_email]
-    form_columns = [Invoice.invoice_id, Invoice.order_id, Invoice.full_amount, Invoice.service_fee, Invoice.order_only_price, Invoice.courier_fee, Invoice.status, Invoice.description, Invoice.comment, Invoice.sent_to_user_via_email, Invoice.sent_at, Invoice.due_date, Invoice.tax_amount, Invoice.discount_amount]
 
     column_choices = {
         Invoice.status: {
@@ -75,10 +71,9 @@ class InvoiceAdmin(ModelView, model=Invoice):
     }
 
 class ConversationAdmin(ModelView, model=Conversation):
-    column_list = [Conversation.id, Conversation.customer_id, Conversation.courier_id, Conversation.status, Conversation.created_at]
-    column_searchable_list = [Conversation.customer_id, Conversation.courier_id]
+    column_list = [Conversation.id, Conversation.customer, Conversation.courier, Conversation.status, Conversation.created_at]
+    column_searchable_list = [Conversation.customer, Conversation.courier]
     column_filters = [Conversation.status]
-    form_columns = [Conversation.customer_id, Conversation.courier_id, Conversation.status]
 
     column_choices = {
         Conversation.status: {
@@ -89,15 +84,52 @@ class ConversationAdmin(ModelView, model=Conversation):
     }
 
 class MessageAdmin(ModelView, model=Message):
-    column_list = [Message.id, Message.conversation_id, Message.sender_id, Message.content, Message.sent_at, Message.message_type]
+    column_list = [Message.id, Message.conversation, Message.sender, Message.content, Message.sent_at, Message.message_type]
     column_searchable_list = [Message.content]
-    column_filters = [Message.message_type, Message.conversation_id, Message.sender_id]
-    form_columns = [Message.conversation_id, Message.sender_id, Message.content, Message.message_type, Message.invoice_description, Message.invoice_gift_price, Message.invoice_service_fee, Message.invoice_delivery_fee, Message.invoice_total]
+    column_filters = [Message.message_type, Message.conversation, Message.sender]
 
     column_choices = {
         Message.message_type: {
             'text': 'Text',
             'invoice': 'Invoice'
+        }
+    }
+
+class WalletAdmin(ModelView, model=Wallet):
+    column_list = [Wallet.id, Wallet.user, Wallet.balance, Wallet.created_at, Wallet.updated_at]
+    column_searchable_list = [Wallet.user]
+    column_filters = [Wallet.user]
+
+class PaymentAdmin(ModelView, model=Payment):
+    column_list = [Payment.id, Payment.invoice, Payment.user, Payment.amount, Payment.payment_method, Payment.status, Payment.transaction_id, Payment.payment_date, Payment.created_at, Payment.updated_at]
+    column_searchable_list = [Payment.transaction_id]
+    column_filters = [Payment.status, Payment.payment_method, Payment.user, Payment.invoice]
+
+    column_choices = {
+        Payment.payment_method: {
+            'wallet': 'Wallet',
+            'credit_card': 'Credit Card',
+            'apple_pay': 'Apple Pay',
+            'mada': 'Mada'
+        },
+        Payment.status: {
+            'pending': 'Pending',
+            'completed': 'Completed',
+            'failed': 'Failed',
+            'refunded': 'Refunded'
+        }
+    }
+
+class PromocodeAdmin(ModelView, model=Promocode):
+    column_list = [Promocode.id, Promocode.name, Promocode.code, Promocode.percentage, Promocode.max_value, Promocode.minimum_order_value, Promocode.usage_limit, Promocode.usage_count, Promocode.valid_until, Promocode.active, Promocode.applicable_to, Promocode.created_at]
+    column_searchable_list = [Promocode.name, Promocode.code]
+    column_filters = [Promocode.active, Promocode.applicable_to]
+
+    column_choices = {
+        Promocode.applicable_to: {
+            'order_total': 'Order Total',
+            'delivery_fee': 'Delivery Fee',
+            'service_fee': 'Service Fee'
         }
     }
 

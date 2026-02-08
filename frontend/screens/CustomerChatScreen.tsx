@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Message, ChatMessage } from '../types';
 import { useAuth } from '../App';
-import { cancelOrder, getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, Conversation } from '../api';
+import { cancelOrder, getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, getConversationByOrder, Conversation } from '../api';
 
 interface Props {
   onBack: () => void;
@@ -15,11 +15,13 @@ interface Props {
     messages: Message[];
     input: string;
     order: OrderResponse | null;
+    conversation: Conversation | null;
   };
   onChatStateChange?: (state: {
     messages: Message[];
     input: string;
     order: OrderResponse | null;
+    conversation: Conversation | null;
   }) => void;
 }
 
@@ -40,6 +42,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
   const [sendingMessage, setSendingMessage] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const { token, user } = useAuth();
   const onChatStateChangeRef = useRef(onChatStateChange);
@@ -60,12 +63,15 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
       setMessages(chatState.messages || []);
       setInput(chatState.input || '');
       setOrder(chatState.order || null);
+      setConversation(chatState.conversation || null);
+      setInitialLoading(false); // Data is already available from chatState
     } else {
       // Reset to initial state for new orders
       setMessages([]);
       setInput('');
       setOrder(null);
       setConversation(null);
+      setInitialLoading(true); // Start loading
     }
 
     // Fetch order details if we have orderId and token
@@ -74,11 +80,74 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     }
   }, [orderId, chatState, token]);
 
+  // Load conversation when order is available (conversation is created with order)
+  useEffect(() => {
+    const loadConversation = async () => {
+      if (!order || !token) {
+        return;
+      }
+
+      try {
+        const conv = await getConversationByOrder(token, order.id);
+        setConversation(conv);
+      } catch (error) {
+        console.error('Failed to load conversation:', error);
+      }
+    };
+
+    loadConversation();
+  }, [order, token]);
+
+  // Load messages when conversation changes
+  useEffect(() => {
+    const loadMessages = async () => {
+      if (!conversation || !token) {
+        setMessages([]);
+        return;
+      }
+
+      setLoadingMessages(true);
+      try {
+        const chatMessages = await getConversationMessages(token, conversation.id);
+        const courierId = order?.assigned_to_user_id;
+        const uiMessages = chatMessages.map(chatMsg => convertChatMessageToMessage(chatMsg, courierId));
+        setMessages(uiMessages);
+        scrollToBottom();
+      } catch (error) {
+        console.error('Failed to load messages:', error);
+        setErrorMessage('فشل في تحميل الرسائل');
+        setShowErrorOverlay(true);
+        setTimeout(() => {
+          setShowErrorOverlay(false);
+          setErrorMessage('');
+        }, 3000);
+      } finally {
+        setLoadingMessages(false);
+      }
+    };
+
+    loadMessages();
+  }, [conversation, token, convertChatMessageToMessage, scrollToBottom, order?.assigned_to_user_id]);
+
+  // Set initial loading to false when data is ready
+  useEffect(() => {
+    if (initialLoading) {
+      const hasOrder = !!order;
+      const hasConversation = !!conversation;
+      const messagesLoaded = !loadingMessages;
+
+      // Wait for order, conversation, and messages to be loaded
+      if (hasOrder && hasConversation && messagesLoaded) {
+        setInitialLoading(false);
+      }
+    }
+  }, [order, conversation, loadingMessages, initialLoading]);
+
 
 
   // Convert ChatMessage to Message for UI display
-  const convertChatMessageToMessage = useCallback((chatMsg: ChatMessage): Message => {
-    const isCurrentUser = chatMsg.sender_id === user?.id;
+  const convertChatMessageToMessage = useCallback((chatMsg: ChatMessage, courierId?: number): Message => {
+    const isCourier = courierId && chatMsg.sender_id === courierId;
     const date = new Date(chatMsg.sent_at);
     const timeString = date.toLocaleTimeString('ar-SA', {
       hour: '2-digit',
@@ -94,7 +163,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     return {
       id: chatMsg.id.toString(),
       text,
-      sender: isCurrentUser ? 'user' : 'other',
+      sender: isCourier ? 'courier' : 'customer',
       time: timeString,
       isInvoice: chatMsg.message_type === 'invoice',
       invoiceData: chatMsg.message_type === 'invoice' ? {
@@ -105,7 +174,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
         total: chatMsg.invoice_total || 0,
       } : undefined,
     };
-  }, []); // Remove user?.id dependency to prevent recreation
+  }, []); // No dependencies needed now
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = useCallback(() => {
@@ -116,137 +185,79 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
 
   // WebSocket connection management
   const connectWebSocket = useCallback(() => {
-    if (!conversation || !token) return;
+      if (!conversation || !token) return;
 
-    // Use the same base URL as API but replace http/https with ws/wss
-    const apiBaseUrl = 'https://971c-37-106-14-206.ngrok-free.app'; // Should match API_BASE_URL
-    // Use wss:// for secure WebSocket connection
-    const wsBaseUrl = apiBaseUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
-    const wsUrl = `${wsBaseUrl}/ws/chat/${conversation.id}?token=${encodeURIComponent(token)}`;
+  // prevent duplicate sockets
+  if (wsRef.current) return;
 
-    console.log('Connecting to WebSocket:', wsUrl);
-    setReconnecting(true);
+  const apiBaseUrl = 'https://971c-37-106-14-206.ngrok-free.app';
+  const wsBaseUrl = apiBaseUrl
+    .replace(/^https:/, 'wss:')
+    .replace(/^http:/, 'ws:');
 
-    const ws = new WebSocket(wsUrl);
+  const wsUrl = `${wsBaseUrl}/ws/chat/${conversation.id}?token=${encodeURIComponent(token)}`;
 
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-      setWsConnected(true);
-      setReconnecting(false);
-      reconnectAttemptsRef.current = 0;
-    };
+  console.log('🔌 Connecting WS:', wsUrl);
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('Received WebSocket message:', data);
+  const ws = new WebSocket(wsUrl);
+  wsRef.current = ws;
 
-        const newMessage = convertChatMessageToMessage(data);
-        setMessages(prev => {
-          // Check if message already exists to avoid duplicates
-          if (prev.some(msg => msg.id === newMessage.id)) {
-            return prev;
-          }
-          return [...prev, newMessage];
-        });
-        scrollToBottom();
-      } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
-      }
-    };
-
-    ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
-      setWsConnected(false);
-      wsRef.current = null;
-
-      // Attempt reconnection if not a normal closure
-      if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
-        console.log(`Attempting reconnection in ${delay}ms...`);
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectAttemptsRef.current++;
-          connectWebSocket();
-        }, delay);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setWsConnected(false);
-    };
-
-    wsRef.current = ws;
-  }, [conversation, token, convertChatMessageToMessage, scrollToBottom]);
-
-  // Disconnect WebSocket
-  const disconnectWebSocket = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close(1000, 'Component unmounting');
-      wsRef.current = null;
-    }
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    setWsConnected(false);
+  ws.onopen = () => {
+    console.log('✅ WS connected');
+    setWsConnected(true);
     setReconnecting(false);
-  }, []);
+    reconnectAttemptsRef.current = 0;
+  };
 
-  // Load conversation and messages
-  const loadConversation = useCallback(async () => {
-    if (!order || !token || !user) return;
-
+  ws.onmessage = (event) => {
     try {
-      // If order is assigned to courier (received by courier status), enable chat
-      if (order.status === 'received by courier' && order.assigned_to_user_id) {
-        const conv = await createOrGetConversation(token, order.assigned_to_user_id);
-        setConversation(conv);
+      const data = JSON.parse(event.data);
+      const newMessage = convertChatMessageToMessage(data, order?.assigned_to_user_id);
 
-        // Load existing messages
-        setLoadingMessages(true);
-        const chatMessages = await getConversationMessages(token, conv.id);
-        const uiMessages = chatMessages.map(convertChatMessageToMessage);
-        setMessages(uiMessages);
-        scrollToBottom();
-      }
-    } catch (error: any) {
-      console.error('Error loading conversation:', error);
-      setErrorMessage(error.message || 'فشل في تحميل المحادثة');
-      setShowErrorOverlay(true);
-      setTimeout(() => {
-        setShowErrorOverlay(false);
-        setErrorMessage('');
-      }, 3000);
-    } finally {
-      setLoadingMessages(false);
+      setMessages(prev => {
+        if (prev.some(m => m.id === newMessage.id)) return prev;
+        return [...prev, newMessage];
+      });
+
+      scrollToBottom();
+    } catch (e) {
+      console.error('WS message error', e);
     }
-  }, [order, token, user, convertChatMessageToMessage, scrollToBottom]);
+  };
 
-  // Effect to load conversation when order is available
-  useEffect(() => {
-    if (order && !conversation) {
-      loadConversation();
+  ws.onclose = (event) => {
+    console.log('🔌 WS closed', event.code);
+    wsRef.current = null;
+    setWsConnected(false);
+
+    if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
+      const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 30000);
+      reconnectAttemptsRef.current += 1;
+      setTimeout(connectWebSocket, delay);
     }
-  }, [order, conversation]); // Removed loadConversation from dependencies
+  };
 
-  // Effect to connect WebSocket when conversation is available
+  ws.onerror = (e) => {
+    console.error('WS error', e);
+  };
+  }, [conversation?.id, token, convertChatMessageToMessage, scrollToBottom, order?.assigned_to_user_id]);
+
+  // Connect WebSocket when conversation is available
   useEffect(() => {
-    if (conversation && !wsConnected && !reconnecting) {
+    if (conversation) {
       connectWebSocket();
     }
 
+    // Cleanup function
     return () => {
-      disconnectWebSocket();
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
-  }, [conversation, wsConnected, reconnecting, connectWebSocket, disconnectWebSocket]);
+  }, [conversation, connectWebSocket]);
 
   // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disconnectWebSocket();
-    };
-  }, [disconnectWebSocket]);
 
   const fetchOrderDetails = async () => {
     if (!orderId || !token) {
@@ -340,7 +351,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
       console.log('✅ Message sent via API:', sentMessage.id);
 
       // Convert to UI message format
-      const uiMessage = convertChatMessageToMessage(sentMessage);
+      const uiMessage = convertChatMessageToMessage(sentMessage, order?.assigned_to_user_id);
       console.log('🔄 Converted to UI message');
 
       // Add to messages (optimistic update - message should also come via WebSocket)
@@ -377,7 +388,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     const newMessage: Message = {
       id: Date.now().toString(),
       text: "تم إرفاق صورة 📸",
-      sender: 'user',
+      sender: 'customer',
       time: 'الآن',
     };
     setMessages([...messages, newMessage]);
@@ -426,6 +437,18 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     }
   };
 
+  // Show loading screen until initial data is loaded
+  if (initialLoading) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.initialLoadingContainer}>
+          <ActivityIndicator size="large" color="#E0AAFF" />
+          <Text style={styles.initialLoadingText}>جاري تحميل المحادثة...</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -469,21 +492,15 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
         style={styles.chatContainer}
         contentContainerStyle={styles.chatContent}
       >
-        {loadingMessages && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#E0AAFF" />
-            <Text style={styles.loadingText}>جاري تحميل الرسائل...</Text>
-          </View>
-        )}
-        {!loadingMessages && messages.length === 0 && conversation && (
+        {messages.length === 0 && conversation && (
           <View style={styles.emptyChatContainer}>
             <Text style={styles.emptyChatText}>ابدأ المحادثة الآن</Text>
           </View>
         )}
         {messages.map((msg) => (
-          <View key={msg.id} style={[styles.messageContainer, msg.sender === 'user' ? styles.userMessage : styles.otherMessage]}>
-            <View style={[styles.messageBubble, msg.sender === 'user' ? styles.userBubble : styles.otherBubble]}>
-              <Text style={[styles.messageText, msg.sender === 'user' ? styles.userText : styles.otherText]}>
+          <View key={msg.id} style={[styles.messageContainer, msg.sender === 'customer' ? styles.customerMessage : styles.courierMessage]}>
+            <View style={[styles.messageBubble, msg.sender === 'customer' ? styles.customerBubble : styles.courierBubble]}>
+              <Text style={[styles.messageText, msg.sender === 'customer' ? styles.customerText : styles.courierText]}>
                 {msg.text}
               </Text>
             </View>
@@ -791,13 +808,13 @@ const styles = StyleSheet.create({
   messageContainer: {
     maxWidth: '85%',
   },
-  userMessage: {
-    alignSelf: 'flex-end',
-    alignItems: 'flex-end',
-  },
-  otherMessage: {
+  customerMessage: {
     alignSelf: 'flex-start',
     alignItems: 'flex-start',
+  },
+  courierMessage: {
+    alignSelf: 'flex-end',
+    alignItems: 'flex-end',
   },
   messageBubble: {
     borderRadius: 28,
@@ -809,26 +826,26 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  userBubble: {
-    backgroundColor: '#E0AAFF',
-    borderBottomRightRadius: 0,
-  },
-  otherBubble: {
+  customerBubble: {
     backgroundColor: 'white',
     borderWidth: 1,
     borderColor: '#F9FAFB',
     borderBottomLeftRadius: 0,
+  },
+  courierBubble: {
+    backgroundColor: '#E0AAFF',
+    borderBottomRightRadius: 0,
   },
   messageText: {
     fontSize: 14,
     fontWeight: '500',
     lineHeight: 20,
   },
-  userText: {
-    color: 'white',
-  },
-  otherText: {
+  customerText: {
     color: '#374151',
+  },
+  courierText: {
+    color: 'white',
   },
   messageTime: {
     fontSize: 10,
@@ -886,6 +903,17 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  initialLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  initialLoadingText: {
+    marginTop: 16,
+    fontSize: 18,
     color: '#6B7280',
     textAlign: 'center',
   },

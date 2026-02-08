@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocketDisconnect, Depends
 from database import engine, Base, AsyncSessionLocal
-from routers import auth, admin, orders, cities, invoices, chat
+from routers import auth, admin, orders, cities, invoices, chat, wallets, payments, promocodes
 from sqladmin import Admin
-from admin import UserAdmin, CityAdmin, OrderAdmin, InvoiceAdmin, ConversationAdmin, MessageAdmin
+from admin import UserAdmin, CityAdmin, OrderAdmin, InvoiceAdmin, ConversationAdmin, MessageAdmin, WalletAdmin, PaymentAdmin, PromocodeAdmin
 import base64
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,9 @@ app.include_router(orders.router, prefix="/orders", tags=["orders"])
 app.include_router(cities.router, prefix="/cities", tags=["cities"])
 app.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
 app.include_router(chat.router, prefix="/chat", tags=["chat"])
+app.include_router(wallets.router, prefix="/wallets", tags=["wallets"])
+app.include_router(payments.router, prefix="/payments", tags=["payments"])
+app.include_router(promocodes.router, prefix="/promocodes", tags=["promocodes"])
 
 # Middleware for admin authentication
 @app.middleware("http")
@@ -83,6 +86,9 @@ sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
 sqladmin.add_view(OrderAdmin)
 sqladmin.add_view(InvoiceAdmin)
+sqladmin.add_view(WalletAdmin)
+sqladmin.add_view(PaymentAdmin)
+sqladmin.add_view(PromocodeAdmin)
 sqladmin.add_view(ConversationAdmin)
 sqladmin.add_view(MessageAdmin)
 

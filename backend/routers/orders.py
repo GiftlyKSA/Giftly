@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import get_db, get_db_sync
-from models import Order, City, User, OrderStatus
+from models import Order, City, User, OrderStatus, Conversation
 from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
 from auth import get_current_user
 
@@ -38,6 +38,18 @@ def create_order(order_data: CreateOrder, current_user: User = Depends(get_curre
     db.add(new_order)
     db.commit()
     db.refresh(new_order)
+
+    # Create a conversation for this order
+    new_conversation = Conversation(
+        customer_id=current_user.id,
+        courier_id=None,  # No courier assigned yet
+        order_id=new_order.id,
+        status='active'
+    )
+
+    db.add(new_conversation)
+    db.commit()
+    db.refresh(new_conversation)
 
     return new_order
 
@@ -120,6 +132,11 @@ def assign_order(order_id: str, request: AssignOrderRequest, current_user: User 
     order.status = OrderStatus.RECEIVED_BY_COURIER
     order.comments = f"Assigned to courier ID:{request.assigned_to_user_id} by admin ID:{current_user.id}"
     # updated_at will be automatically updated due to onupdate=func.now()
+
+    # Update conversation with courier_id
+    if order.conversation:
+        order.conversation.courier_id = request.assigned_to_user_id
+        db.commit()
 
     db.commit()
     db.refresh(order)

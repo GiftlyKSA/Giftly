@@ -433,7 +433,8 @@ export interface ChatMessage {
 export interface Conversation {
   id: number;
   customer_id: number;
-  courier_id: number;
+  courier_id: number | null;
+  order_id: number;
   status: string;
   created_at: string;
 }
@@ -530,6 +531,51 @@ export const createOrGetConversation = async (token: string, otherUserId: number
 
   if (!response.ok) {
     let errorMessage = 'Failed to create conversation';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export const getConversationByOrder = async (token: string, orderId: number): Promise<Conversation> => {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/by-order/${orderId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch conversation';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export const getCities = async (): Promise<CityResponse[]> => {
+  const response = await fetch(`${API_BASE_URL}/cities/`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch cities';
     try {
       const error = await response.json();
       errorMessage = error.detail || errorMessage;
