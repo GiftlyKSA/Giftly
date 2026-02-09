@@ -252,6 +252,17 @@ class CreateWallet(BaseModel):
 class UpdateWalletBalance(BaseModel):
     amount: int  # Positive for deposit, negative for withdrawal
 
+class ChargeWalletRequest(BaseModel):
+    amount: int  # Amount to charge in riyals (not cents)
+
+    @validator('amount')
+    def validate_amount(cls, v):
+        if v < 10:
+            raise ValueError('Minimum charge amount is 10 riyals')
+        if not isinstance(v, int):
+            raise ValueError('Amount must be an integer')
+        return v
+
 # Payment schemas
 class PaymentMethodEnum(str, Enum):
     WALLET = "wallet"
@@ -275,6 +286,7 @@ class PaymentResponse(BaseModel):
     transaction_id: Optional[str]
     payment_date: Optional[datetime]
     payment_details: Optional[str]
+    wallet_balance_before: Optional[int]
     created_at: datetime
     updated_at: datetime
 

@@ -23,6 +23,11 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+  const [showErrorOverlay, setShowErrorOverlay] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
 
   useEffect(() => {
     fetchInvoice();
@@ -267,10 +272,10 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
               <Text style={styles.invoiceNumber}>رقم الفاتورة: {invoice.invoice_id}</Text>
               <Text style={styles.invoiceDate}>التاريخ: {new Date(invoice.created_at).toLocaleDateString('en-US')}</Text>
             </View>
-            {/* Apple Pay Button - Only show if invoice is new */}
+            {/* Pay Now Button - Only show if invoice is new */}
             {invoice.status === 'new' && (
-              <Pressable onPress={() => handlePayment('apple_pay')} style={styles.brandApplePayButton}>
-                <Text style={styles.brandApplePayText}> Pay</Text>
+              <Pressable onPress={() => setShowPaymentModal(true)} style={styles.payNowButton}>
+                <Text style={styles.payNowButtonText}>ادفع الآن</Text>
               </Pressable>
             )}
           </View>
@@ -368,6 +373,144 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
             />
           </View>
         </Modal>
+
+        {/* Payment Method Modal */}
+        <Modal
+          visible={showPaymentModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowPaymentModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>اختيار طريقة الدفع</Text>
+                <Pressable onPress={() => setShowPaymentModal(false)} style={styles.closeButton}>
+                  <Feather name="x" size={20} color="#9CA3AF" />
+                </Pressable>
+              </View>
+
+              <View style={styles.modalBody}>
+                <Pressable
+                  onPress={() => {
+                    Alert.alert('Apple Pay', 'Apple Pay placeholder - implement payment logic here');
+                    setShowPaymentModal(false);
+                  }}
+                  style={styles.applePayButton}
+                >
+                  <Text style={styles.applePayButtonText}> Pay</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    Alert.alert('Mada/Credit', 'Mada/Credit placeholder - implement payment logic here');
+                    setShowPaymentModal(false);
+                  }}
+                  style={styles.paymentMethodButton}
+                >
+                  <View style={styles.paymentMethodContent}>
+                    <View style={styles.paymentIcon}>
+                      <Feather name="credit-card" size={20} color="#9CA3AF" />
+                    </View>
+                    <Text style={styles.paymentMethodText}>Mada/Credit</Text>
+                  </View>
+                  <Feather name="chevron-left" size={18} color="#9CA3AF" />
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setShowPaymentModal(false);
+                    setShowPaymentConfirmation(true);
+                  }}
+                  style={styles.paymentMethodButton}
+                >
+                  <View style={styles.paymentMethodContent}>
+                    <View style={styles.paymentIcon}>
+                      <Feather name="wallet" size={20} color="#9CA3AF" />
+                    </View>
+                    <Text style={styles.paymentMethodText}>المحفظة</Text>
+                  </View>
+                  <Feather name="chevron-left" size={18} color="#9CA3AF" />
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Payment Confirmation Modal */}
+        <Modal
+          visible={showPaymentConfirmation}
+          animationType="fade"
+          transparent={true}
+          onRequestClose={() => setShowPaymentConfirmation(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.confirmationModalContent}>
+              <View style={styles.confirmationModalBody}>
+                <Feather name="credit-card" size={48} color="#E0AAFF" />
+                <Text style={styles.confirmationTitle}>تأكيد الدفع</Text>
+                <Text style={styles.confirmationMessage}>
+                  هل أنت متأكد من رغبتك في دفع {invoice.full_amount.toFixed(2)} ريال من المحفظة؟
+                </Text>
+                <View style={styles.confirmationButtons}>
+                  <Pressable
+                    onPress={() => setShowPaymentConfirmation(false)}
+                    style={styles.cancelButton}
+                  >
+                    <Text style={styles.cancelButtonText}>لا</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={async () => {
+                      setShowPaymentConfirmation(false);
+                      try {
+                        const { payWithWallet } = await import('../api');
+                        const result = await payWithWallet(token, invoice.id);
+
+                        setShowSuccessOverlay(true);
+                        setTimeout(() => {
+                          setShowSuccessOverlay(false);
+                          // Refresh invoice to show paid status
+                          fetchInvoice();
+                        }, 3000);
+                      } catch (error: any) {
+                        setErrorMessage(error.message || 'حدث خطأ أثناء الدفع');
+                        setShowErrorOverlay(true);
+                        setTimeout(() => {
+                          setShowErrorOverlay(false);
+                          setErrorMessage('');
+                        }, 3000);
+                      }
+                    }}
+                    style={styles.confirmButton}
+                  >
+                    <Text style={styles.confirmButtonText}>نعم</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Success Overlay */}
+        {showSuccessOverlay && (
+          <View style={styles.successOverlay}>
+            <View style={styles.successMessage}>
+              <Feather name="check-circle" size={48} color="#10B981" />
+              <Text style={styles.successTitle}>تم الدفع بنجاح</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Error Overlay */}
+        {showErrorOverlay && (
+          <View style={styles.errorOverlay}>
+            <View style={styles.errorMessage}>
+              <Feather name="x-circle" size={48} color="#EF4444" />
+              <Text style={styles.errorTitle}>فشل في الدفع</Text>
+              <Text style={styles.errorSubtitle}>{errorMessage}</Text>
+            </View>
+          </View>
+        )}
 
       </ScrollView>
     </View>
@@ -818,5 +961,212 @@ const styles = StyleSheet.create({
   },
   webView: {
     flex: 1,
+  },
+  payNowButton: {
+    marginTop: 16,
+    backgroundColor: '#E0AAFF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#E0AAFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  payNowButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  paymentMethodButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F9FAFB',
+    marginBottom: 12,
+  },
+  paymentMethodContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  paymentMethodText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#374151',
+  },
+  applePayButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 32,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+  },
+  modalBody: {
+    gap: 16,
+  },
+  successOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  successMessage: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  successTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  successSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  errorOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  errorMessage: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  confirmationModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    width: '90%',
+    maxWidth: 350,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  confirmationModalBody: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  confirmationTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  confirmationMessage: {
+    fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 24,
+  },
+  confirmationButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6B7280',
+  },
+  confirmButton: {
+    flex: 1,
+    backgroundColor: '#E0AAFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#E0AAFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  confirmButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'white',
   },
 });

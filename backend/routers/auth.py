@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from database import get_db, get_db_sync
-from models import User, City
+from models import User, City, Wallet
 from schemas import SendOTP, OTPVerify, Token, UpdateUserProfile, RefreshTokenRequest
-from auth import authenticate_user, create_access_token, create_refresh_token, create_jwt_tokens, create_jwt_tokens_async, revoke_user_tokens, generate_otp, get_user_by_phone, get_current_user, get_user_from_refresh_token
+from auth import authenticate_user, create_access_token, create_refresh_token, create_jwt_tokens, create_jwt_tokens_async, revoke_user_tokens, generate_otp, get_user_by_phone, get_current_user, get_user_from_refresh_token, get_user_by_phone_sync
 from config import settings
 
 router = APIRouter()
@@ -202,6 +202,11 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
 
     db.commit()
     db.refresh(user)
+
+    # Create wallet with balance 0 for the new user
+    wallet = Wallet(user_id=user.id, balance=0)
+    db.add(wallet)
+    db.commit()
 
     # Create and store permanent tokens
     access_token, refresh_token = create_jwt_tokens(db, user)

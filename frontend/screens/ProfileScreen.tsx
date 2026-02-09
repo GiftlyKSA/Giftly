@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, Modal, TextInput, StyleSheet, Image, Dimensions, Alert, Platform } from 'react-native';
+import { View, Text, Pressable, ScrollView, Modal, TextInput, StyleSheet, Dimensions, Alert, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -37,10 +37,14 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [showErrorOverlay, setShowErrorOverlay] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number>(0);
+  const [chargeAmount, setChargeAmount] = useState<string>('');
   const [errors, setErrors] = useState<{
     name?: string;
     email?: string;
     date_of_birth?: string;
+    chargeAmount?: string;
   }>({});
 
   useEffect(() => {
@@ -52,6 +56,22 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
       }
     }
   }, [userData]);
+
+  useEffect(() => {
+    const fetchWalletBalance = async () => {
+      if (!token) return;
+      try {
+        const { getWallet } = await import('../api');
+        const walletData = await getWallet(token);
+        setWalletBalance(walletData.balance);
+      } catch (error) {
+        console.error('Failed to fetch wallet balance:', error);
+        // Keep the default balance of 0 if fetch fails
+      }
+    };
+
+    fetchWalletBalance();
+  }, [token]);
 
   /* ---------------- Validation ---------------- */
   const validateForm = () => {
@@ -79,6 +99,22 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
     return Object.keys(newErrors).length === 0;
   };
 
+  const validateChargeAmount = () => {
+    const newErrors: typeof errors = {};
+
+    const amount = parseInt(chargeAmount);
+    if (!chargeAmount.trim()) {
+      newErrors.chargeAmount = 'مبلغ الشحن مطلوب';
+    } else if (isNaN(amount) || !Number.isInteger(amount)) {
+      newErrors.chargeAmount = 'يجب أن يكون المبلغ رقماً صحيحاً';
+    } else if (amount < 10) {
+      newErrors.chargeAmount = 'الحد الأدنى للشحن 10 ريالات';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const menuItems = [
     { icon: 'user', label: 'تعديل البيانات الشخصية', action: () => setShowEditModal(true) },
     { icon: 'credit-card', label: 'المحفظة وطرق الدفع' },
@@ -93,15 +129,6 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
       </View>
 
       <View style={styles.profileSection}>
-        <View style={styles.avatarContainer}>
-          <Image
-            source={{ uri: 'https://picsum.photos/seed/user1/200/200' }}
-            style={styles.avatar}
-          />
-          <Pressable onPress={() => setShowEditModal(true)} style={styles.editButton}>
-            <Feather name="edit-3" size={18} color="white" />
-          </Pressable>
-        </View>
         <Text style={styles.userName}>{name}</Text>
         <Text style={styles.userEmail}>{email}</Text>
       </View>
@@ -111,13 +138,13 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
           <View style={styles.walletContent}>
             <View style={styles.walletInfo}>
               <Text style={styles.walletLabel}>رصيد المحفظة</Text>
-              <Text style={styles.walletAmount}>450.00 <Text style={styles.currency}>ر.س</Text></Text>
+              <Text style={styles.walletAmount}>{walletBalance.toFixed(2)} <Text style={styles.currency}>ر.س</Text></Text>
             </View>
             <View style={styles.walletIcon}>
               <Feather name="credit-card" size={28} color="rgba(255, 255, 255, 0.8)" />
             </View>
           </View>
-          <Pressable style={styles.chargeButton}>
+          <Pressable onPress={() => setShowPaymentModal(true)} style={styles.chargeButton}>
             <Text style={styles.chargeButtonText}>شحن الرصيد</Text>
           </Pressable>
         </View>
@@ -365,6 +392,99 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
           </View>
         </View>
       )}
+
+      {/* Payment Method Modal */}
+      <Modal
+        visible={showPaymentModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setShowPaymentModal(false);
+          setChargeAmount('');
+          setErrors({});
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>شحن الرصيد</Text>
+              <Pressable onPress={() => {
+                setShowPaymentModal(false);
+                setChargeAmount('');
+                setErrors({});
+              }} style={styles.closeButton}>
+                <Feather name="x" size={20} color="#9CA3AF" />
+              </Pressable>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>مبلغ الشحن (ريال)</Text>
+                <TextInput
+                  style={[styles.input, errors.chargeAmount && styles.inputError]}
+                  value={chargeAmount}
+                  onChangeText={(text) => {
+                    setChargeAmount(text);
+                    setErrors((e) => ({ ...e, chargeAmount: undefined }));
+                  }}
+                  placeholder="أدخل المبلغ"
+                  keyboardType="numeric"
+                  textAlign="right"
+                />
+                {errors.chargeAmount && <Text style={styles.errorText}>{errors.chargeAmount}</Text>}
+              </View>
+
+              <Pressable
+                onPress={async () => {
+                  if (!validateChargeAmount()) return;
+
+                  try {
+                    const { chargeWallet } = await import('../api');
+                    const result = await chargeWallet(token!, parseInt(chargeAmount));
+                    setWalletBalance(result.new_balance);
+                    Alert.alert('نجح', result.message);
+                    setShowPaymentModal(false);
+                    setChargeAmount('');
+                    setErrors({});
+                  } catch (error: any) {
+                    Alert.alert('خطأ', error.message || 'فشل في شحن الرصيد');
+                  }
+                }}
+                style={styles.applePayButton}
+              >
+                <Text style={styles.applePayButtonText}> Pay</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={async () => {
+                  if (!validateChargeAmount()) return;
+
+                  try {
+                    const { chargeWallet } = await import('../api');
+                    const result = await chargeWallet(token!, parseInt(chargeAmount));
+                    setWalletBalance(result.new_balance);
+                    Alert.alert('نجح', result.message);
+                    setShowPaymentModal(false);
+                    setChargeAmount('');
+                    setErrors({});
+                  } catch (error: any) {
+                    Alert.alert('خطأ', error.message || 'فشل في شحن الرصيد');
+                  }
+                }}
+                style={styles.paymentMethodButton}
+              >
+                <View style={styles.paymentMethodContent}>
+                  <View style={styles.paymentIcon}>
+                    <Feather name="credit-card" size={20} color="#9CA3AF" />
+                  </View>
+                  <Text style={styles.paymentMethodText}>Credit/Mada</Text>
+                </View>
+                <Feather name="chevron-left" size={18} color="#9CA3AF" />
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
       </ScrollView>
 
       {/* Bottom Navigation */}
@@ -439,35 +559,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     marginBottom: 32,
   },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: 16,
-  },
-  avatar: {
-    width: 112,
-    height: 112,
-    borderRadius: 40,
-    borderWidth: 4,
-    borderColor: 'white',
-  },
-  editButton: {
-    position: 'absolute',
-    bottom: -4,
-    right: -4,
-    width: 40,
-    height: 40,
-    backgroundColor: '#E0AAFF',
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#FFFFFC',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
+
   userName: {
     fontSize: 24,
     fontWeight: '900',
@@ -630,14 +722,16 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalContent: {
     backgroundColor: 'white',
-    borderTopLeftRadius: 48,
-    borderTopRightRadius: 48,
+    borderRadius: 24,
     padding: 32,
+    width: '90%',
+    maxWidth: 400,
     maxHeight: '80%',
   },
   modalHeader: {
@@ -885,5 +979,61 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     textAlign: 'center',
+  },
+  paymentMethodButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F9FAFB',
+  },
+  paymentMethodContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  paymentIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  applePayText: {
+    fontSize: 24,
+    color: '#000000',
+  },
+  paymentMethodText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#374151',
+  },
+  applePayButton: {
+    backgroundColor: '#000000',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+    marginBottom: 12,
+  },
+  applePayButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });

@@ -587,3 +587,96 @@ export const getCities = async (): Promise<CityResponse[]> => {
 
   return response.json();
 };
+
+export interface WalletResponse {
+  id: number;
+  user_id: number;
+  balance: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const getWallet = async (token: string): Promise<WalletResponse> => {
+  const response = await fetch(`${API_BASE_URL}/wallets/my-wallet`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch wallet';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export interface WalletPaymentResponse {
+  message: string;
+  payment_id: number;
+  remaining_balance: number;
+}
+
+export const payWithWallet = async (token: string, invoiceId: number): Promise<WalletPaymentResponse> => {
+  const response = await fetch(`${API_BASE_URL}/payments/pay-with-wallet/${invoiceId}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to process wallet payment';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export interface ChargeWalletRequest {
+  amount: number;
+}
+
+export interface ChargeWalletResponse {
+  message: string;
+  new_balance: number;
+}
+
+export const chargeWallet = async (token: string, amount: number): Promise<ChargeWalletResponse> => {
+  const response = await fetch(`${API_BASE_URL}/wallets/charge-wallet`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ amount }),
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to charge wallet';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};

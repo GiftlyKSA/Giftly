@@ -64,6 +64,8 @@ class User(Base):
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     # Relationship to payments
     payments = relationship("Payment", back_populates="user", cascade="all, delete-orphan")
+    # Relationship to invoices created by user
+    created_invoices = relationship("Invoice", back_populates="created_by_user")
 
     __table_args__ = (
         Index('idx_user_role', 'role'),
@@ -132,6 +134,7 @@ class Invoice(Base):
     def __str__(self):
         return f"Invoice {self.invoice_id}"
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     full_amount = Column(Integer, nullable=False)  # Amount in cents/halaym
     service_fee = Column(Integer, nullable=False, default=0)
     order_only_price = Column(Integer, nullable=False)
@@ -150,6 +153,7 @@ class Invoice(Base):
 
     # Relationships
     order = relationship("Order", back_populates="invoice")
+    created_by_user = relationship("User", back_populates="created_invoices")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
     promocode = relationship("Promocode", back_populates="invoices")
 
@@ -258,6 +262,7 @@ class Payment(Base):
     transaction_id = Column(String, nullable=True)  # From payment processor
     payment_date = Column(DateTime, nullable=True)  # When payment was processed
     payment_details = Column(Text, nullable=True)  # JSON string for method-specific details
+    wallet_balance_before = Column(Integer, nullable=True)  # Balance before wallet payment (in cents/halaym)
     created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), nullable=False)
     updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=func.now(), nullable=False)
 
