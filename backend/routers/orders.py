@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from database import get_db, get_db_sync
-from models import Order, City, User, OrderStatus, Conversation, CourierBalanceAddition, Invoice, Wallet, Payment, PaymentMethod
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func, select, desc
+from database import get_db
+from models import Order, City, User, OrderStatus, Conversation, CourierBalanceAddition, Invoice, Wallet, Payment, PaymentMethod, InvoiceStatus
 from datetime import datetime
 from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
 from auth import get_current_user
@@ -10,18 +11,20 @@ from auth import get_current_user
 router = APIRouter()
 
 @router.post("/", response_model=OrderResponse)
-def create_order(order_data: CreateOrder, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def create_order(order_data: CreateOrder, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Create a new order. Only authenticated users can create orders.
     City and delivery_date are mandatory, description is optional.
     """
     # Validate that city exists
-    city = db.query(City).filter(City.id == order_data.city_id).first()
+    result = await db.execute(select(City).where(City.id == order_data.city_id))
+    city = result.scalar_one_or_none()
     if not city:
         raise HTTPException(status_code=400, detail="Invalid city ID")
 
     # Generate order_id
-    max_id = db.query(func.max(Order.id)).scalar()
+    result = await db.execute(select(func.max(Order.id)))
+    max_id = result.scalar()
     if max_id is None:
         max_id = 0
     order_id = f"ORDR-{100000 + max_id + 1}"
@@ -37,8 +40,8 @@ def create_order(order_data: CreateOrder, current_user: User = Depends(get_curre
     )
 
     db.add(new_order)
-    db.commit()
-    db.refresh(new_order)
+    await db.commit()
+    await db.refresh(new_order)
 
     # Create a conversation for this order
     new_conversation = Conversation(
@@ -49,26 +52,28 @@ def create_order(order_data: CreateOrder, current_user: User = Depends(get_curre
     )
 
     db.add(new_conversation)
-    db.commit()
-    db.refresh(new_conversation)
+    await db.commit()
+    await db.refresh(new_conversation)
 
     return new_order
 
 @router.get("/", response_model=list[OrderResponse])
-def get_user_orders(current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_user_orders(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get all orders for the authenticated user.
     """
-    orders = db.query(Order).filter(Order.created_by_user_id == current_user.id).all()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.created_by_user_id == current_user.id))
+    orders = result.scalars().all()
 
     return orders
 
 @router.get("/{order_id}", response_model=OrderResponse)
-def get_order(order_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get a specific order by order_id. The user who created the order or the assigned courier can access it.
     """
-    order = db.query(Order).filter(Order.order_id == order_id).first()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -79,11 +84,12 @@ def get_order(order_id: str, current_user: User = Depends(get_current_user), db:
     return order
 
 @router.put("/{order_id}/cancel", response_model=OrderResponse)
-def cancel_order(order_id: str, cancel_data: CancelOrderRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def cancel_order(order_id: str, cancel_data: CancelOrderRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Cancel an order. Only the user who created the order can cancel it.
     """
-    order = db.query(Order).filter(Order.order_id == order_id).first()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.created_by_user_id != current_user.id:
@@ -102,25 +108,27 @@ def cancel_order(order_id: str, cancel_data: CancelOrderRequest, current_user: U
     order.comments = f"{cancel_data.reason} by ID:{current_user.id} and name:{current_user.name}"
     # updated_at will be automatically updated due to onupdate=func.now()
 
-    db.commit()
-    db.refresh(order)
+    await db.commit()
+    await db.refresh(order)
 
     return order
 
 @router.put("/{order_id}/assign", response_model=OrderResponse)
-def assign_order(order_id: str, request: AssignOrderRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def assign_order(order_id: str, request: AssignOrderRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Assign an order to a courier. Only admins can assign orders.
     """
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not authorized to assign orders")
 
-    order = db.query(Order).filter(Order.order_id == order_id).first()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
     # Check if the assigned user exists and is a courier
-    assigned_user = db.query(User).filter(User.id == request.assigned_to_user_id).first()
+    result = await db.execute(select(User).where(User.id == request.assigned_to_user_id))
+    assigned_user = result.scalar_one_or_none()
     if not assigned_user:
         raise HTTPException(status_code=404, detail="Assigned user not found")
     if assigned_user.role != "Courier":
@@ -139,15 +147,15 @@ def assign_order(order_id: str, request: AssignOrderRequest, current_user: User 
     # Update conversation with courier_id
     if order.conversation:
         order.conversation.courier_id = request.assigned_to_user_id
-        db.commit()
+        await db.commit()
 
-    db.commit()
-    db.refresh(order)
+    await db.commit()
+    await db.refresh(order)
 
     return order
 
 @router.get("/courier/available", response_model=list[OrderResponse])
-def get_available_orders_for_courier(current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_available_orders_for_courier(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get available orders for the courier in their city. Only couriers can access this.
     """
@@ -155,22 +163,26 @@ def get_available_orders_for_courier(current_user: User = Depends(get_current_us
         raise HTTPException(status_code=403, detail="Only couriers can access available orders")
 
     # Get orders that are NEW and in the same city as the courier
-    orders = db.query(Order).filter(
-        Order.status == OrderStatus.NEW,
-        Order.city_id == current_user.city_id
-    ).all()
+    result = await db.execute(
+        select(Order).options(selectinload(Order.invoice)).where(
+            Order.status == OrderStatus.NEW,
+            Order.city_id == current_user.city_id
+        )
+    )
+    orders = result.scalars().all()
 
     return orders
 
 @router.put("/{order_id}/accept", response_model=OrderResponse)
-def accept_order(order_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def accept_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Accept an order by a courier. Only couriers can accept orders.
     """
     if current_user.role != "Courier":
         raise HTTPException(status_code=403, detail="Only couriers can accept orders")
 
-    order = db.query(Order).filter(Order.order_id == order_id).first()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -191,15 +203,15 @@ def accept_order(order_id: str, current_user: User = Depends(get_current_user), 
     # Update conversation with courier_id
     if order.conversation:
         order.conversation.courier_id = current_user.id
-        db.commit()  # Commit conversation update immediately
+        await db.commit()  # Commit conversation update immediately
 
-    db.commit()
-    db.refresh(order)
+    await db.commit()
+    await db.refresh(order)
 
     return order
 
 @router.get("/courier/active", response_model=list[OrderResponse])
-def get_courier_active_orders(current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_courier_active_orders(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get active orders assigned to the courier. Only couriers can access this.
     """
@@ -207,15 +219,18 @@ def get_courier_active_orders(current_user: User = Depends(get_current_user), db
         raise HTTPException(status_code=403, detail="Only couriers can access their active orders")
 
     # Get orders assigned to this courier that are not cancelled or done
-    orders = db.query(Order).filter(
-        Order.assigned_to_user_id == current_user.id,
-        Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE])
-    ).all()
+    result = await db.execute(
+        select(Order).options(selectinload(Order.invoice)).where(
+            Order.assigned_to_user_id == current_user.id,
+            Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE])
+        )
+    )
+    orders = result.scalars().all()
 
     return orders
 
 @router.get("/courier/all", response_model=list[OrderResponse])
-def get_courier_all_orders(current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_courier_all_orders(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get all orders assigned to the courier (active, completed, cancelled). Only couriers can access this.
     """
@@ -223,12 +238,13 @@ def get_courier_all_orders(current_user: User = Depends(get_current_user), db: S
         raise HTTPException(status_code=403, detail="Only couriers can access their orders")
 
     # Get all orders assigned to this courier
-    orders = db.query(Order).filter(Order.assigned_to_user_id == current_user.id).all()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.assigned_to_user_id == current_user.id))
+    orders = result.scalars().all()
 
     return orders
 
 @router.get("/courier/stats")
-def get_courier_stats(current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_courier_stats(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get courier statistics: active orders count and today's earnings from paid invoices.
     Only couriers can access this.
@@ -237,10 +253,13 @@ def get_courier_stats(current_user: User = Depends(get_current_user), db: Sessio
         raise HTTPException(status_code=403, detail="Only couriers can access their stats")
 
     # Get active orders count (not cancelled or done)
-    active_orders_count = db.query(Order).filter(
-        Order.assigned_to_user_id == current_user.id,
-        Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE])
-    ).count()
+    result = await db.execute(
+        select(func.count()).select_from(Order).where(
+            Order.assigned_to_user_id == current_user.id,
+            Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE])
+        )
+    )
+    active_orders_count = result.scalar()
 
     # Get today's earnings: sum of service_fee from paid invoices created today
     from datetime import datetime, time
@@ -248,14 +267,15 @@ def get_courier_stats(current_user: User = Depends(get_current_user), db: Sessio
     today_end = datetime.combine(datetime.utcnow().date(), time.max)
 
     # Sum service_fee from invoices that are paid and created today for this courier's orders
-    todays_earnings_result = db.query(func.sum(Invoice.service_fee)).join(Order).filter(
-        Order.assigned_to_user_id == current_user.id,
-        Invoice.status == InvoiceStatus.PAID,
-        Invoice.created_at >= today_start,
-        Invoice.created_at <= today_end
-    ).scalar()
-
-    todays_earnings = todays_earnings_result or 0
+    result = await db.execute(
+        select(func.sum(Invoice.service_fee)).select_from(Invoice).join(Order).where(
+            Order.assigned_to_user_id == current_user.id,
+            Invoice.status == InvoiceStatus.PAID,
+            Invoice.created_at >= today_start,
+            Invoice.created_at <= today_end
+        )
+    )
+    todays_earnings = result.scalar() or 0
 
     return {
         "active_orders_count": active_orders_count,
@@ -263,7 +283,7 @@ def get_courier_stats(current_user: User = Depends(get_current_user), db: Sessio
     }
 
 @router.put("/{order_id}/complete", response_model=OrderResponse)
-def complete_order(order_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def complete_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Mark an order as completed (DONE). Only the assigned courier can complete orders.
     When an order is completed and has a paid invoice, add courier fee to courier's wallet.
@@ -271,7 +291,8 @@ def complete_order(order_id: str, current_user: User = Depends(get_current_user)
     if current_user.role != "Courier":
         raise HTTPException(status_code=403, detail="Only couriers can complete orders")
 
-    order = db.query(Order).filter(Order.order_id == order_id).first()
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -288,7 +309,8 @@ def complete_order(order_id: str, current_user: User = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Order cannot be completed - invoice not paid")
 
     # Get courier's wallet
-    courier_wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+    courier_wallet = result.scalar_one_or_none()
     if not courier_wallet:
         raise HTTPException(status_code=404, detail="Courier wallet not found")
 
@@ -308,10 +330,13 @@ def complete_order(order_id: str, current_user: User = Depends(get_current_user)
 
         # Create courier balance addition record
         # Find the payment that was made for this invoice
-        payment = db.query(Payment).filter(
-            Payment.invoice_id == order.invoice.id,
-            Payment.status == "completed"
-        ).first()
+        result = await db.execute(
+            select(Payment).where(
+                Payment.invoice_id == order.invoice.id,
+                Payment.status == "completed"
+            )
+        )
+        payment = result.scalar_one_or_none()
 
         if payment:
             courier_balance_addition = CourierBalanceAddition(
@@ -324,12 +349,12 @@ def complete_order(order_id: str, current_user: User = Depends(get_current_user)
             )
             db.add(courier_balance_addition)
 
-        db.commit()
-        db.refresh(order)
+        await db.commit()
+        await db.refresh(order)
 
         return order
 
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         print(f"Error completing order: {e}")
         raise HTTPException(status_code=500, detail="-/+ .7# #+F'! %CE'D 'D7D(. J1,I 'DE-'HD) E1) #.1I.")

@@ -3,10 +3,10 @@ from datetime import datetime, timedelta, date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from database import get_db, get_db_sync
+from database import get_db
 from models import User, City, Wallet
 from schemas import SendOTP, OTPVerify, Token, UpdateUserProfile, RefreshTokenRequest
-from auth import authenticate_user, create_access_token, create_refresh_token, create_jwt_tokens, create_jwt_tokens_async, revoke_user_tokens, generate_otp, get_user_by_phone, get_current_user, get_user_from_refresh_token, get_user_by_phone_sync
+from auth import authenticate_user, create_access_token, create_refresh_token, create_jwt_tokens_async, revoke_user_tokens, generate_otp, get_user_by_phone, get_current_user, get_user_from_refresh_token
 from config import settings
 
 router = APIRouter()
@@ -84,7 +84,7 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
         }
 
 @router.get("/me", response_model=dict)
-def read_current_user(current_user: User = Depends(get_current_user)):
+async def read_current_user(current_user: User = Depends(get_current_user)):
     return {
         "id": current_user.id,
         "phone_number": current_user.phone_number,
@@ -98,7 +98,7 @@ def read_current_user(current_user: User = Depends(get_current_user)):
     }
 
 @router.put("/me", response_model=dict)
-def update_current_user(user_update: UpdateUserProfile, current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def update_current_user(user_update: UpdateUserProfile, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     errors = {}
 
     # Validate name
@@ -116,7 +116,8 @@ def update_current_user(user_update: UpdateUserProfile, current_user: User = Dep
         errors["email"] = "5J:) 'D(1J/ 'D%DC*1HFJ :J1 5-J-)"
     else:
         # Check email uniqueness
-        existing_email_user = db.query(User).filter(User.email == user_update.email.strip(), User.id != current_user.id).first()
+        result = await db.execute(select(User).where(User.email == user_update.email.strip(), User.id != current_user.id))
+        existing_email_user = result.scalar_one_or_none()
         if existing_email_user:
             errors["email"] = "'D(1J/ 'D%DC*1HFJ E3*./E ('DA9D"
 
@@ -139,8 +140,8 @@ def update_current_user(user_update: UpdateUserProfile, current_user: User = Dep
     current_user.email = user_update.email.strip()
     current_user.date_of_birth = user_update.date_of_birth
 
-    db.commit()
-    db.refresh(current_user)
+    await db.commit()
+    await db.refresh(current_user)
 
     return {
         "id": current_user.id,
@@ -152,20 +153,37 @@ def update_current_user(user_update: UpdateUserProfile, current_user: User = Dep
     }
 
 @router.post("/refresh", response_model=Token)
-def refresh_access_token(refresh_request: RefreshTokenRequest, db: Session = Depends(get_db_sync)):
-    user = get_user_from_refresh_token(refresh_request.refresh_token, db)
+async def refresh_access_token(refresh_request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    # Use async refresh token validation
+    user = await get_user_from_refresh_token(refresh_request.refresh_token, db)
 
-    # Revoke the old refresh token
-    from auth import revoke_token_by_refresh_token
-    revoke_token_by_refresh_token(db, refresh_request.refresh_token)
+    # INACTIVITY CHECK: If user hasn't been active for 15+ days, force re-login
+    if user.last_activity:
+        days_since_last_activity = (datetime.utcnow() - user.last_activity).days
+        if days_since_last_activity > 15:
+            # User inactive for more than 15 days - revoke all tokens and force re-login
+            await revoke_user_tokens(db, user.id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired due to inactivity. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    # Create new tokens
-    access_token, refresh_token = create_jwt_tokens(db, user)
+    # SECURITY: Invalidate ALL existing tokens for this user when refreshing
+    # This prevents token reuse and forces logout on other devices
+    await revoke_user_tokens(db, user.id)
+
+    # Update user's last activity timestamp
+    user.last_activity = datetime.utcnow()
+    await db.commit()
+
+    # Create new tokens with fresh user data
+    access_token, refresh_token = await create_jwt_tokens_async(db, user)
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 @router.post("/complete-profile", response_model=Token)
-def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
+async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db)):
     """Complete profile for new users after OTP verification"""
     # Extract data from request
     phone_number = profile_data.get("phone_number")
@@ -189,7 +207,7 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
 
-    user = get_user_by_phone_sync(db, phone_number)
+    user = await get_user_by_phone(db, phone_number)
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
 
@@ -198,7 +216,8 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
         raise HTTPException(status_code=400, detail="Profile already completed")
 
     # Check email uniqueness
-    existing_email_user = db.query(User).filter(User.email == email, User.id != user.id).first()
+    result = await db.execute(select(User).where(User.email == email, User.id != user.id))
+    existing_email_user = result.scalar_one_or_none()
     if existing_email_user:
         raise HTTPException(status_code=400, detail="Email is already registered")
 
@@ -211,16 +230,16 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
     user.is_verified = True
     user.role = role
 
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
 
     # Create wallet with balance 0 for the new user
     wallet = Wallet(user_id=user.id, balance=0)
     db.add(wallet)
-    db.commit()
+    await db.commit()
 
     # Create and store permanent tokens
-    access_token, refresh_token = create_jwt_tokens(db, user)
+    access_token, refresh_token = await create_jwt_tokens_async(db, user)
 
     return {
         "access_token": access_token,
@@ -230,7 +249,7 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
     }
 
 @router.post("/logout")
-def logout(current_user: User = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def logout(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Logout user by revoking all their tokens"""
-    revoke_user_tokens(db, current_user.id)
+    await revoke_user_tokens(db, current_user.id)
     return {"message": "Successfully logged out"}

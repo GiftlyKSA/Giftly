@@ -81,6 +81,7 @@ class User(Base):
     role = Column(String, default='Customer')
     admin_username = Column(String, unique=True, nullable=True)
     admin_password_hash = Column(String, nullable=True)
+    last_activity = Column(DateTime, nullable=True)  # Track last user activity for session management
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
 
     # Relationship to JWT tokens

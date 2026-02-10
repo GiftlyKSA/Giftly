@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from models import User, JWTToken
 from config import settings
-from database import get_db, get_db_sync
+from database import get_db
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
@@ -50,49 +50,30 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
     return encoded_jwt
 
-def create_jwt_tokens(db: Session, user: User):
-    """Create and store JWT tokens for a user"""
-    # Create tokens
-    access_token_expires = datetime.utcnow() + timedelta(minutes=30)
-    refresh_token_expires = datetime.utcnow() + timedelta(days=7)
-
-    access_token = create_access_token(
-        data={"sub": user.phone_number},
-        expires_delta=timedelta(minutes=30)
-    )
-    refresh_token = create_refresh_token(
-        data={"sub": user.phone_number},
-        expires_delta=timedelta(days=7)
-    )
-
-    # Store in database
-    jwt_token = JWTToken(
-        user_id=user.id,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        access_token_expires_at=access_token_expires,
-        refresh_token_expires_at=refresh_token_expires,
-        is_revoked=False
-    )
-    db.add(jwt_token)
-    db.commit()
-    db.refresh(jwt_token)
-
-    return access_token, refresh_token
-
 async def create_jwt_tokens_async(db: AsyncSession, user: User):
-    """Create and store JWT tokens for a user (async version)"""
-    # Create tokens
-    access_token_expires = datetime.utcnow() + timedelta(minutes=30)
-    refresh_token_expires = datetime.utcnow() + timedelta(days=7)
+    """Create and store JWT tokens for a user"""
+    # Create tokens with 60-minute access token and 30-day refresh token
+    access_token_expires = datetime.utcnow() + timedelta(minutes=60)
+    refresh_token_expires = datetime.utcnow() + timedelta(days=30)
 
+    # Include essential user data in JWT payload to avoid DB lookups
     access_token = create_access_token(
-        data={"sub": user.phone_number},
-        expires_delta=timedelta(minutes=30)
+        data={
+            "sub": user.phone_number,
+            "user_id": user.id,
+            "role": user.role,
+            "name": user.name,
+            "is_verified": user.is_verified
+        },
+        expires_delta=timedelta(minutes=60)
     )
     refresh_token = create_refresh_token(
-        data={"sub": user.phone_number},
-        expires_delta=timedelta(days=7)
+        data={
+            "sub": user.phone_number,
+            "user_id": user.id,
+            "role": user.role
+        },
+        expires_delta=timedelta(days=30)
     )
 
     # Store in database
@@ -110,27 +91,26 @@ async def create_jwt_tokens_async(db: AsyncSession, user: User):
 
     return access_token, refresh_token
 
-def revoke_user_tokens(db: Session, user_id: int):
+async def revoke_user_tokens(db: AsyncSession, user_id: int):
     """Revoke all tokens for a user"""
-    db.query(JWTToken).filter(
-        JWTToken.user_id == user_id,
-        JWTToken.is_revoked == False
-    ).update({"is_revoked": True})
-    db.commit()
+    from sqlalchemy import update
+    await db.execute(
+        update(JWTToken).where(
+            JWTToken.user_id == user_id,
+            JWTToken.is_revoked == False
+        ).values(is_revoked=True)
+    )
+    await db.commit()
 
-def revoke_token_by_access_token(db: Session, access_token: str):
-    """Revoke a specific token by access token"""
-    db.query(JWTToken).filter(
-        JWTToken.access_token == access_token
-    ).update({"is_revoked": True})
-    db.commit()
-
-def revoke_token_by_refresh_token(db: Session, refresh_token: str):
+async def revoke_token_by_refresh_token(db: AsyncSession, refresh_token: str):
     """Revoke a specific token by refresh token"""
-    db.query(JWTToken).filter(
-        JWTToken.refresh_token == refresh_token
-    ).update({"is_revoked": True})
-    db.commit()
+    from sqlalchemy import update
+    await db.execute(
+        update(JWTToken).where(
+            JWTToken.refresh_token == refresh_token
+        ).values(is_revoked=True)
+    )
+    await db.commit()
 
 def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
@@ -140,10 +120,7 @@ async def get_user_by_phone(db: AsyncSession, phone_number: str):
     result = await db.execute(select(User).where(User.phone_number == phone_number))
     return result.scalar_one_or_none()
 
-def get_user_by_phone_sync(db: Session, phone_number: str):
-    return db.query(User).filter(User.phone_number == phone_number).first()
-
-def get_current_user(token: str = Depends(security), db: Session = Depends(get_db_sync)):
+async def get_current_user(token: str = Depends(security), db: AsyncSession = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -167,11 +144,15 @@ def get_current_user(token: str = Depends(security), db: Session = Depends(get_d
 
     # For temporary tokens (used during profile completion), skip database check
     if not is_temp:
-        # Check if token exists in database and is not revoked
-        jwt_token = db.query(JWTToken).filter(
-            JWTToken.access_token == token.credentials,
-            JWTToken.is_revoked == False
-        ).first()
+        from sqlalchemy import select
+        # Check if token exists in database and is not revoked (single DB query)
+        result = await db.execute(
+            select(JWTToken).where(
+                JWTToken.access_token == token.credentials,
+                JWTToken.is_revoked == False
+            )
+        )
+        jwt_token = result.scalar_one_or_none()
 
         if not jwt_token:
             raise HTTPException(
@@ -188,12 +169,41 @@ def get_current_user(token: str = Depends(security), db: Session = Depends(get_d
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    user = get_user_by_phone_sync(db, phone_number)
-    if user is None:
-        raise credentials_exception
-    return user
+    # Extract user data from JWT payload (no additional DB query needed)
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+    name = payload.get("name")
+    is_verified = payload.get("is_verified", False)
 
-def get_user_from_refresh_token(token: str, db: Session):
+    # Update user's last activity timestamp (async, non-blocking)
+    # This tracks when the user was last active for session management
+    if user_id:
+        # Fire and forget - don't wait for this to complete
+        import asyncio
+        asyncio.create_task(update_user_activity(db, user_id))
+
+    # Return user object constructed from JWT payload
+    return User(
+        id=user_id,
+        phone_number=phone_number,
+        role=role,
+        name=name,
+        is_verified=is_verified
+    )
+
+async def update_user_activity(db: AsyncSession, user_id: int):
+    """Update user's last activity timestamp asynchronously"""
+    try:
+        from sqlalchemy import update
+        await db.execute(
+            update(User).where(User.id == user_id).values(last_activity=datetime.utcnow())
+        )
+        await db.commit()
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Failed to update user activity for user {user_id}: {e}")
+
+async def get_user_from_refresh_token(token: str, db: AsyncSession):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate refresh token",
@@ -214,11 +224,15 @@ def get_user_from_refresh_token(token: str, db: Session):
     except JWTError:
         raise credentials_exception
 
+    from sqlalchemy import select
     # Check if refresh token exists in database and is not revoked
-    jwt_token = db.query(JWTToken).filter(
-        JWTToken.refresh_token == token,
-        JWTToken.is_revoked == False
-    ).first()
+    result = await db.execute(
+        select(JWTToken).where(
+            JWTToken.refresh_token == token,
+            JWTToken.is_revoked == False
+        )
+    )
+    jwt_token = result.scalar_one_or_none()
 
     if not jwt_token:
         raise HTTPException(
@@ -235,8 +249,14 @@ def get_user_from_refresh_token(token: str, db: Session):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = get_user_by_phone_sync(db, phone_number)
-    if user is None:
-        raise credentials_exception
-    return user
+    # Extract user data from JWT payload (no additional DB query needed)
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+
+    # Return user object constructed from JWT payload
+    return User(
+        id=user_id,
+        phone_number=phone_number,
+        role=role
+    )
 

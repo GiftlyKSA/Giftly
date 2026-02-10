@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 from datetime import datetime
-from database import get_db_sync
+from database import get_db
 from models import Wallet, DepositRequest, DepositRequestStatus
 from schemas import WalletResponse, ChargeWalletRequest, RequestWalletDeposit
 from auth import get_current_user
@@ -9,23 +11,25 @@ from auth import get_current_user
 router = APIRouter()
 
 @router.get("/my-wallet", response_model=WalletResponse)
-def get_my_wallet(current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_my_wallet(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get current user's wallet.
     """
-    wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+    wallet = result.scalar_one_or_none()
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
 
     return wallet
 
 @router.post("/charge-wallet")
-def charge_wallet(request: ChargeWalletRequest, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def charge_wallet(request: ChargeWalletRequest, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Charge wallet with specified amount in riyals.
     """
     # Get user's wallet
-    wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+    wallet = result.scalar_one_or_none()
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
 
@@ -33,8 +37,8 @@ def charge_wallet(request: ChargeWalletRequest, current_user=Depends(get_current
     wallet.balance += request.amount
     wallet.updated_at = datetime.utcnow()
 
-    db.commit()
-    db.refresh(wallet)
+    await db.commit()
+    await db.refresh(wallet)
 
     return {
         "message": f"*تم شحن المحفظة بمبلغ {request.amount} ريال. الرصيد الجديد: {wallet.balance} ريال.*",
@@ -42,7 +46,7 @@ def charge_wallet(request: ChargeWalletRequest, current_user=Depends(get_current
     }
 
 @router.post("/request-deposit")
-def request_wallet_deposit(request: RequestWalletDeposit, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def request_wallet_deposit(request: RequestWalletDeposit, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Request a wallet deposit. Only couriers can request deposits.
     """
@@ -50,7 +54,8 @@ def request_wallet_deposit(request: RequestWalletDeposit, current_user=Depends(g
         raise HTTPException(status_code=403, detail="Only couriers can request wallet deposits")
 
     # Get user's wallet
-    wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+    wallet = result.scalar_one_or_none()
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
 
@@ -66,8 +71,8 @@ def request_wallet_deposit(request: RequestWalletDeposit, current_user=Depends(g
     )
 
     db.add(deposit_request)
-    db.commit()
-    db.refresh(deposit_request)
+    await db.commit()
+    await db.refresh(deposit_request)
 
     return {
         "message": f"تم إرسال طلب شحن المحفظة بمبلغ {request.amount} ريال. سيتم مراجعة الطلب من قبل الإدارة.",

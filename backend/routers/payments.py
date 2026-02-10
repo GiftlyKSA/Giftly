@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
-from database import get_db_sync
+from sqlalchemy import select
+from database import get_db
 from models import Payment, Invoice, User, Wallet, OrderStatus, InvoiceStatus, PaymentStatus
 from schemas import PaymentResponse, CreatePayment
 from auth import get_current_user
@@ -11,18 +13,25 @@ from datetime import datetime
 router = APIRouter()
 
 @router.post("/", response_model=PaymentResponse)
-def create_payment(payment_data: CreatePayment, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def create_payment(payment_data: CreatePayment, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Create a new payment for an invoice. User must own the invoice.
     """
     # Check if invoice exists and user owns it
-    invoice = db.query(Invoice).filter(Invoice.id == payment_data.invoice_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.id == payment_data.invoice_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=400, detail="Invoice not found")
 
     # Check if user owns this invoice (through order)
-    order = db.query(Invoice).join(Invoice.order).filter(Invoice.id == payment_data.invoice_id).first()
-    if not order or order.order.created_by_user_id != current_user.id:
+    result = await db.execute(
+        select(Invoice).join(Invoice.order).where(
+            Invoice.id == payment_data.invoice_id,
+            Invoice.order.has(Order.created_by_user_id == current_user.id)
+        )
+    )
+    order_check = result.scalar_one_or_none()
+    if not order_check:
         raise HTTPException(status_code=403, detail="Access denied - invoice not owned by user")
 
     # Check if user exists (should be current user)
@@ -41,26 +50,33 @@ def create_payment(payment_data: CreatePayment, current_user=Depends(get_current
     )
 
     db.add(new_payment)
-    db.commit()
-    db.refresh(new_payment)
+    await db.commit()
+    await db.refresh(new_payment)
 
     # Check if invoice is fully paid
-    total_paid = db.query(func.sum(Payment.amount)).filter(Payment.invoice_id == payment_data.invoice_id, Payment.status == PaymentStatus.COMPLETED).scalar() or 0
+    result = await db.execute(
+        select(func.sum(Payment.amount)).where(
+            Payment.invoice_id == payment_data.invoice_id,
+            Payment.status == PaymentStatus.COMPLETED
+        )
+    )
+    total_paid = result.scalar() or 0
     if total_paid >= invoice.full_amount:
         invoice.status = InvoiceStatus.PAID
         invoice.updated_at = datetime.utcnow()
         invoice.order.status = OrderStatus.PAID
         invoice.order.updated_at = datetime.utcnow()
-        db.commit()
+        await db.commit()
 
     return new_payment
 
 @router.get("/{payment_id}", response_model=PaymentResponse)
-def get_payment(payment_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_payment(payment_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get payment by ID. User can only view their own payments.
     """
-    payment = db.query(Payment).filter(Payment.id == payment_id).first()
+    result = await db.execute(select(Payment).where(Payment.id == payment_id))
+    payment = result.scalar_one_or_none()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
@@ -71,38 +87,48 @@ def get_payment(payment_id: int, current_user=Depends(get_current_user), db: Ses
     return payment
 
 @router.get("/invoice/{invoice_id}", response_model=List[PaymentResponse])
-def get_payments_by_invoice(invoice_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_payments_by_invoice(invoice_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get all payments for an invoice. User can only view payments for their own invoices.
     """
     # Check if invoice exists and user owns it
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     # Check if user owns this invoice (through order)
-    order = db.query(Invoice).join(Invoice.order).filter(Invoice.id == invoice_id).first()
-    if not order or order.order.created_by_user_id != current_user.id:
+    result = await db.execute(
+        select(Invoice).join(Invoice.order).where(
+            Invoice.id == invoice_id,
+            Invoice.order.has(Order.created_by_user_id == current_user.id)
+        )
+    )
+    order_check = result.scalar_one_or_none()
+    if not order_check:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    payments = db.query(Payment).filter(Payment.invoice_id == invoice_id).all()
+    result = await db.execute(select(Payment).where(Payment.invoice_id == invoice_id))
+    payments = result.scalars().all()
     return payments
 
 @router.get("/my-payments", response_model=List[PaymentResponse])
-def get_my_payments(current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_my_payments(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get all payments by current user.
     """
-    payments = db.query(Payment).filter(Payment.user_id == current_user.id).all()
+    result = await db.execute(select(Payment).where(Payment.user_id == current_user.id))
+    payments = result.scalars().all()
     return payments
 
 @router.post("/pay-with-wallet/{invoice_id}")
-def pay_with_wallet(invoice_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def pay_with_wallet(invoice_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Pay for an invoice using wallet balance.
     """
     # Check if invoice exists and user owns it
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="'DA'*H1) :J1 EH,H/)")
 
@@ -115,7 +141,8 @@ def pay_with_wallet(invoice_id: int, current_user=Depends(get_current_user), db:
         raise HTTPException(status_code=400, detail="'DA'*H1) E/AH9) ('DA9D")
 
     # Get user's wallet
-    wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+    wallet = result.scalar_one_or_none()
     if not wallet:
         raise HTTPException(status_code=404, detail="'لا يوجد لديك محفظة. يرجى إنشاء محفظة أولاً.")
 
@@ -152,8 +179,8 @@ def pay_with_wallet(invoice_id: int, current_user=Depends(get_current_user), db:
         )
 
         db.add(payment)
-        db.commit()
-        db.refresh(payment)
+        await db.commit()
+        await db.refresh(payment)
 
         return {
             "message": "تمت عملية الدفع بنجاح",
@@ -162,6 +189,6 @@ def pay_with_wallet(invoice_id: int, current_user=Depends(get_current_user), db:
         }
 
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         print(f"Error processing wallet payment: {e}")
         raise HTTPException(status_code=500, detail="حدث خطأ أثناء معالجة الدفع. يرجى المحاولة مرة أخرى.")

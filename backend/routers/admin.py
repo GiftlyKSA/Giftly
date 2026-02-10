@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Form
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from database import get_db, get_db_sync
+from sqlalchemy import select
+from database import get_db
 from models import User
 from auth import get_password_hash, verify_password
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -10,8 +12,14 @@ router = APIRouter()
 
 security = HTTPBasic()
 
-def authenticate_admin(credentials: HTTPBasicCredentials = Depends(security), db: Session = Depends(get_db_sync)):
-    user = db.query(User).filter(User.admin_username == credentials.username, User.is_admin == True).first()
+async def authenticate_admin(credentials: HTTPBasicCredentials = Depends(security), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User).where(
+            User.admin_username == credentials.username,
+            User.is_admin == True
+        )
+    )
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -27,9 +35,10 @@ def authenticate_admin(credentials: HTTPBasicCredentials = Depends(security), db
     return user
 
 @router.post("/create-admin")
-def create_admin_user(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db_sync)):
+async def create_admin_user(username: str = Form(...), password: str = Form(...), db: AsyncSession = Depends(get_db)):
     # Check if admin already exists
-    existing_admin = db.query(User).filter(User.admin_username == username).first()
+    result = await db.execute(select(User).where(User.admin_username == username))
+    existing_admin = result.scalar_one_or_none()
     if existing_admin:
         raise HTTPException(status_code=400, detail="Admin user already exists")
 
@@ -44,12 +53,12 @@ def create_admin_user(username: str = Form(...), password: str = Form(...), db: 
         is_verified=True
     )
     db.add(admin_user)
-    db.commit()
-    db.refresh(admin_user)
+    await db.commit()
+    await db.refresh(admin_user)
     return {"message": "Admin user created successfully"}
 
 @router.get("/me")
-def get_admin_info(current_admin: User = Depends(authenticate_admin)):
+async def get_admin_info(current_admin: User = Depends(authenticate_admin)):
     return {
         "id": current_admin.id,
         "username": current_admin.admin_username,

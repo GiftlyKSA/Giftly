@@ -8,10 +8,10 @@ os.chdir(backend_dir)
 from database import AsyncSessionLocal
 from sqlalchemy import text
 
-async def add_wallet_balance_before_column():
+async def add_last_activity_column():
     """
-    Add wallet_balance_before column to payments table.
-    This column stores the wallet balance before a wallet payment was made.
+    Add last_activity column to users table.
+    This column tracks when users were last active for session management.
     """
     async with AsyncSessionLocal() as db:
         try:
@@ -19,25 +19,25 @@ async def add_wallet_balance_before_column():
             result = await db.execute(text("""
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'payments' AND column_name = 'wallet_balance_before'
+                WHERE table_name = 'users' AND column_name = 'last_activity'
             """))
 
             if result.fetchone():
-                print("Column 'wallet_balance_before' already exists in payments table")
+                print("Column 'last_activity' already exists in users table")
                 return
 
             # Add the column
             await db.execute(text("""
-                ALTER TABLE payments
-                ADD COLUMN wallet_balance_before INTEGER
+                ALTER TABLE users
+                ADD COLUMN last_activity TIMESTAMP
             """))
 
             await db.commit()
-            print("Successfully added 'wallet_balance_before' column to payments table")
+            print("Successfully added 'last_activity' column to users table")
 
         except Exception as e:
             print(f"Error adding column: {e}")
             await db.rollback()
 
 if __name__ == "__main__":
-    asyncio.run(add_wallet_balance_before_column())
+    asyncio.run(add_last_activity_column())

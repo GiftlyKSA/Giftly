@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from database import get_db, get_db_sync
+from sqlalchemy import select
+from database import get_db
 from models import Invoice, Order, InvoiceStatus
 from schemas import CreateInvoice, InvoiceResponse
 from auth import get_current_user
@@ -22,22 +24,26 @@ from fastapi.responses import FileResponse
 router = APIRouter()
 
 @router.post("/", response_model=InvoiceResponse)
-def create_invoice(invoice_data: CreateInvoice, db: Session = Depends(get_db_sync)):
+async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends(get_db)):
     """
     Create a new invoice for an order. Admin only endpoint.
     """
     # Check if order exists
-    order = db.query(Order).filter(Order.id == invoice_data.order_id).first()
+    result = await db.execute(select(Order).where(Order.id == invoice_data.order_id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=400, detail="Order not found")
 
     # Check if invoice already exists for this order
-    existing_invoice = db.query(Invoice).filter(Invoice.order_id == invoice_data.order_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.order_id == invoice_data.order_id))
+    existing_invoice = result.scalar_one_or_none()
     if existing_invoice:
         raise HTTPException(status_code=400, detail="Invoice already exists for this order")
 
     # Generate unique invoice ID
-    invoice_id = f"INV-{db.query(Invoice).count() + 1:06d}"
+    result = await db.execute(select(Invoice))
+    invoice_count = len(result.scalars().all())
+    invoice_id = f"INV-{invoice_count + 1:06d}"
 
     # Create the invoice
     new_invoice = Invoice(
@@ -56,33 +62,36 @@ def create_invoice(invoice_data: CreateInvoice, db: Session = Depends(get_db_syn
     )
 
     db.add(new_invoice)
-    db.commit()
-    db.refresh(new_invoice)
+    await db.commit()
+    await db.refresh(new_invoice)
 
     return new_invoice
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
-def get_invoice(invoice_id: str, db: Session = Depends(get_db_sync)):
+async def get_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get invoice by invoice_id. Public endpoint for viewing invoices.
     """
-    invoice = db.query(Invoice).filter(Invoice.invoice_id == invoice_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     return invoice
 
 @router.get("/id/{invoice_db_id}", response_model=InvoiceResponse)
-def get_invoice_by_id(invoice_db_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_invoice_by_id(invoice_db_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get invoice by database ID. Authenticated users can view their own invoices.
     """
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_db_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.id == invoice_db_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     # Check if the invoice belongs to the current user (through the order)
-    order = db.query(Order).filter(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id).first()
+    result = await db.execute(select(Order).where(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -205,22 +214,24 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
     return buffer
 
 @router.get("/order/{order_id}/pdf")
-def download_invoice_pdf(
+async def download_invoice_pdf(
     order_id: int,
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db_sync)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Generate and download PDF invoice for an order.
     Creates a temporary file that auto-deletes after 10 minutes.
     """
     # Check if order exists and belongs to current user
-    order = db.query(Order).filter(Order.id == order_id, Order.created_by_user_id == current_user.id).first()
+    result = await db.execute(select(Order).where(Order.id == order_id, Order.created_by_user_id == current_user.id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or access denied")
 
-    invoice = db.query(Invoice).filter(Invoice.order_id == order_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.order_id == order_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for this order")
 
@@ -247,23 +258,25 @@ def download_invoice_pdf(
     )
 
 @router.get("/id/{invoice_db_id}/pdf")
-def download_invoice_pdf_by_id(
+async def download_invoice_pdf_by_id(
     invoice_db_id: int,
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db_sync)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Generate and download PDF invoice by database ID.
     Creates a temporary file that auto-deletes after 10 minutes.
     """
     # Get invoice and check ownership
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_db_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.id == invoice_db_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     # Check if the invoice belongs to the current user (through the order)
-    order = db.query(Order).filter(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id).first()
+    result = await db.execute(select(Order).where(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -290,16 +303,18 @@ def download_invoice_pdf_by_id(
     )
 
 @router.get("/order/{order_id}", response_model=InvoiceResponse)
-def get_invoice_by_order(order_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db_sync)):
+async def get_invoice_by_order(order_id: int, current_user = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get invoice by order ID. Authenticated users can view their own invoices.
     """
     # Check if order exists and belongs to current user
-    order = db.query(Order).filter(Order.id == order_id, Order.created_by_user_id == current_user.id).first()
+    result = await db.execute(select(Order).where(Order.id == order_id, Order.created_by_user_id == current_user.id))
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or access denied")
 
-    invoice = db.query(Invoice).filter(Invoice.order_id == order_id).first()
+    result = await db.execute(select(Invoice).where(Invoice.order_id == order_id))
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for this order")
 

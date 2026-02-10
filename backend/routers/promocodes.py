@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from database import get_db_sync
+from sqlalchemy import select
+from database import get_db
 from models import Promocode
 from schemas import ApplyPromocodeRequest
 from typing import List
@@ -9,15 +11,18 @@ from datetime import datetime
 router = APIRouter()
 
 @router.post("/apply", response_model=dict)
-def apply_promocode(request: ApplyPromocodeRequest, db: Session = Depends(get_db_sync)):
+async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Depends(get_db)):
     """
     Calculate discount for a promocode. Public endpoint for customers and couriers.
     """
-    promocode = db.query(Promocode).filter(
-        Promocode.code == request.code,
-        Promocode.active == True,
-        Promocode.valid_until > datetime.utcnow()
-    ).first()
+    result = await db.execute(
+        select(Promocode).where(
+            Promocode.code == request.code,
+            Promocode.active == True,
+            Promocode.valid_until > datetime.utcnow()
+        )
+    )
+    promocode = result.scalar_one_or_none()
 
     if not promocode:
         raise HTTPException(status_code=404, detail="Invalid or expired promocode")
@@ -51,14 +56,17 @@ def apply_promocode(request: ApplyPromocodeRequest, db: Session = Depends(get_db
     }
 
 @router.get("/active/list", response_model=List[dict])
-def get_active_promocodes(db: Session = Depends(get_db_sync)):
+async def get_active_promocodes(db: AsyncSession = Depends(get_db)):
     """
     Get all active promocodes. Public endpoint for customers and couriers.
     """
-    promocodes = db.query(Promocode).filter(
-        Promocode.active == True,
-        Promocode.valid_until > datetime.utcnow()
-    ).all()
+    result = await db.execute(
+        select(Promocode).where(
+            Promocode.active == True,
+            Promocode.valid_until > datetime.utcnow()
+        )
+    )
+    promocodes = result.scalars().all()
 
     # Return simplified promocode info (without sensitive data like usage counts)
     result = []
