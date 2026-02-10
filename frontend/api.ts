@@ -191,7 +191,10 @@ export interface UserDetails {
   email: string;
   name: string;
   date_of_birth: string | null;
+  national_id: string | null;
+  passport_id: string | null;
   is_verified: boolean;
+  role: string;
 }
 
 export const getUserDetails = async (token: string): Promise<UserDetails> => {
@@ -390,6 +393,9 @@ export interface CompleteProfileRequest {
   name: string;
   email: string;
   date_of_birth: string;
+  role?: string;
+  national_id?: string;
+  passport_id?: string;
 }
 
 export const completeProfile = async (data: CompleteProfileRequest): Promise<TokenResponse> => {
@@ -669,6 +675,184 @@ export const chargeWallet = async (token: string, amount: number): Promise<Charg
 
   if (!response.ok) {
     let errorMessage = 'Failed to charge wallet';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export interface RequestDepositRequest {
+  amount: number;
+}
+
+export interface RequestDepositResponse {
+  message: string;
+  requested_amount: number;
+  current_balance: number;
+}
+
+export const requestWalletDeposit = async (token: string, amount: number): Promise<RequestDepositResponse> => {
+  const response = await fetch(`${API_BASE_URL}/wallets/request-deposit`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ amount }),
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to request deposit';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+// Courier-specific API functions
+export const getAvailableOrdersForCourier = async (token: string): Promise<OrderResponse[]> => {
+  const response = await fetch(`${API_BASE_URL}/orders/courier/available`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch available orders';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export const acceptOrder = async (token: string, orderId: string): Promise<OrderResponse> => {
+  const response = await fetch(`${API_BASE_URL}/orders/${orderId}/accept`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to accept order';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export const getCourierActiveOrders = async (token: string): Promise<OrderResponse[]> => {
+  const response = await fetch(`${API_BASE_URL}/orders/courier/active`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch active orders';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export const getCourierAllOrders = async (token: string): Promise<OrderResponse[]> => {
+  const response = await fetch(`${API_BASE_URL}/orders/courier/all`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch courier orders';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export const completeOrder = async (token: string, orderId: string): Promise<OrderResponse> => {
+  const response = await fetch(`${API_BASE_URL}/orders/${orderId}/complete`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to complete order';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch (e) {
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+};
+
+export interface CourierStatsResponse {
+  active_orders_count: number;
+  todays_earnings: number; // in cents/halaym
+}
+
+export const getCourierStats = async (token: string): Promise<CourierStatsResponse> => {
+  const response = await fetch(`${API_BASE_URL}/orders/courier/stats`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to fetch courier stats';
     try {
       const error = await response.json();
       errorMessage = error.detail || errorMessage;

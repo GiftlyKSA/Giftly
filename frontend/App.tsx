@@ -27,14 +27,17 @@ interface UserData {
   email: string;
   name: string;
   date_of_birth: string | null;
+  national_id: string | null;
+  passport_id: string | null;
   is_verified: boolean;
+  role: string;
 }
 
 interface AuthContextType {
   token: string | null;
   phone: string | null;
   userData: UserData | null;
-  login: (token: string, phone: string) => void;
+  login: (token: string, phone: string) => Promise<UserData | null>;
   logout: () => void;
   fetchUserData: () => Promise<void>;
 }
@@ -55,11 +58,12 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const [phone, setPhone] = useState<string | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
 
-  const login = (newToken: string, newPhone: string) => {
+  const login = async (newToken: string, newPhone: string): Promise<UserData | null> => {
     setToken(newToken);
     setPhone(newPhone);
     // Fetch user data when logging in
-    fetchUserData(newToken);
+    await fetchUserData(newToken);
+    return userData;
   };
 
   const logout = () => {
@@ -104,8 +108,19 @@ const AppContent: React.FC = () => {
       order: any;
     };
   }>({});
+  const [courierChatStates, setCourierChatStates] = useState<{
+    [orderId: string]: {
+      messages: Message[];
+      input: string;
+      order: any;
+      conversation: any;
+    };
+  }>({});
+  const [selectedCourierOrderId, setSelectedCourierOrderId] = useState<string | null>(null);
   const [ordersData, setOrdersData] = useState<any[]>([]);
-  const { login, token } = useAuth();
+  const { login, token, userData } = useAuth();
+
+
 
   const handleChatStateChange = useCallback((state: { messages: Message[]; input: string; order: any }) => {
     if (selectedOrderId) {
@@ -116,7 +131,17 @@ const AppContent: React.FC = () => {
     }
   }, [selectedOrderId]);
 
+  const handleCourierChatStateChange = useCallback((state: { messages: Message[]; input: string; order: any; conversation: any }) => {
+    if (selectedCourierOrderId) {
+      setCourierChatStates(prev => ({
+        ...prev,
+        [selectedCourierOrderId]: state
+      }));
+    }
+  }, [selectedCourierOrderId]);
+
   const currentChatState = selectedOrderId ? chatStates[selectedOrderId] : null;
+  const currentCourierChatState = selectedCourierOrderId ? courierChatStates[selectedCourierOrderId] : null;
 
   const fetchOrders = async () => {
     if (!token) return;
@@ -160,15 +185,27 @@ const AppContent: React.FC = () => {
       case 'welcome':
         return <WelcomeScreen onStart={() => setCurrentScreen('login')} />;
       case 'login':
-        return <LoginScreen onNext={(result) => {
-          if (result.phone === '123') {
-            setCurrentScreen('courierLogin');
-          } else if (result.needsProfile) {
+        return <LoginScreen onNext={async (result) => {
+          if (result.needsProfile) {
             setAuthData({ phone: result.phone, otp: result.otp });
             setCurrentScreen('profile');
           } else if (result.token) {
-            login(result.token, result.phone);
-            setCurrentScreen('home');
+            // Fetch user data and navigate based on role
+            try {
+              const { getUserDetails } = await import('./api');
+              const userData = await getUserDetails(result.token);
+              await login(result.token, result.phone);
+
+              if (userData.role === 'Courier') {
+                setCurrentScreen('courierHome');
+              } else {
+                setCurrentScreen('home');
+              }
+            } catch (error) {
+              console.error('Failed to fetch user data:', error);
+              // Fallback to home screen
+              setCurrentScreen('home');
+            }
           }
         }} />;
       case 'profile':
@@ -229,7 +266,21 @@ const AppContent: React.FC = () => {
           theme={theme}
         />;
       case 'courierChat':
-        return <CourierChatScreen userRole="customer" onBack={() => setCurrentScreen('home')} onFinishOrder={() => {}} onShowInvoice={() => {}} />;
+        console.log('App.tsx: Rendering CourierChatScreen with selectedCourierOrderId:', selectedCourierOrderId);
+        return <CourierChatScreen
+          orderId={selectedCourierOrderId}
+          chatState={currentCourierChatState}
+          onChatStateChange={handleCourierChatStateChange}
+          onShowInvoice={(orderId) => {
+            console.log('App.tsx: Courier onShowInvoice called with orderId:', orderId);
+            setPreviousScreen('courierChat');
+            setCurrentOrderId(orderId);
+            setCurrentScreen('invoice');
+          }}
+          onBack={() => {
+            setCurrentScreen('courierHome');
+          }}
+        />;
       case 'customerChat':
         console.log('App.tsx: Rendering CustomerChatScreen with selectedOrderId:', selectedOrderId);
         return <CustomerChatScreen
@@ -278,6 +329,10 @@ const AppContent: React.FC = () => {
         return <CourierHomeScreen
           onLogout={() => setCurrentScreen('welcome')}
           onAcceptOrder={() => {}}
+          onNavigateToChat={(orderId) => {
+            setSelectedCourierOrderId(orderId);
+            setCurrentScreen('courierChat');
+          }}
           isDarkMode={isDarkMode}
           toggleDarkMode={toggleDarkMode}
           theme={theme}

@@ -91,6 +91,8 @@ def read_current_user(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "name": current_user.name,
         "date_of_birth": current_user.date_of_birth.isoformat() if current_user.date_of_birth else None,
+        "national_id": current_user.national_id,
+        "passport_id": current_user.passport_id,
         "is_verified": current_user.is_verified,
         "role": current_user.role
     }
@@ -170,9 +172,16 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
     name = profile_data.get("name")
     email = profile_data.get("email")
     date_of_birth_str = profile_data.get("date_of_birth")
+    national_id = profile_data.get("national_id")
+    passport_id = profile_data.get("passport_id")
+    role = profile_data.get("role", "Customer")
 
     if not all([phone_number, name, email, date_of_birth_str]):
-        raise HTTPException(status_code=400, detail="All profile fields are required")
+        raise HTTPException(status_code=400, detail="Name, email, and date of birth are required")
+
+    # For couriers, require either national_id or passport_id
+    if role == "Courier" and not (national_id or passport_id):
+        raise HTTPException(status_code=400, detail="Couriers must provide either national ID or passport ID")
 
     from datetime import datetime
     try:
@@ -197,8 +206,10 @@ def complete_profile(profile_data: dict, db: Session = Depends(get_db_sync)):
     user.name = name
     user.email = email
     user.date_of_birth = date_of_birth
+    user.national_id = national_id
+    user.passport_id = passport_id
     user.is_verified = True
-    user.role = 'Customer'
+    user.role = role
 
     db.commit()
     db.refresh(user)

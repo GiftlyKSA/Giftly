@@ -159,28 +159,23 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
           ) : null}
 
             <Pressable onPress={async () => {
-              if (phone === '123') {
-                // Special case for courier login
-                onNext({ phone: '123' });
-              } else {
-                // Validate phone number
-                const validationError = validatePhone(phone);
-                if (validationError) {
-                  setPhoneError(validationError);
-                  return;
-                }
+              // Validate phone number
+              const validationError = validatePhone(phone);
+              if (validationError) {
+                setPhoneError(validationError);
+                return;
+              }
 
-                try {
-                  const response = await sendOTP(phone);
-                  setSentOtp(response.otp);
-                  setStep('OTP');
-                  setTimer(90);
-                  setCanResend(false);
-                  setError('');
-                  setPhoneError(''); // Clear any previous phone errors
-                } catch (error: any) {
-                  setError(error.message || 'Failed to send OTP');
-                }
+              try {
+                const response = await sendOTP(phone);
+                setSentOtp(response.otp);
+                setStep('OTP');
+                setTimer(90);
+                setCanResend(false);
+                setError('');
+                setPhoneError(''); // Clear any previous phone errors
+              } catch (error: any) {
+                setError(error.message || 'Failed to send OTP');
               }
             }} style={styles.primaryButton}>
               <Text style={styles.primaryButtonText}>إرسال رمز التحقق</Text>

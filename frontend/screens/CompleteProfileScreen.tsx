@@ -26,6 +26,8 @@ export const CompleteProfileScreen: React.FC<Props> = ({ phone, otp, onNext }) =
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [birthDate, setBirthDate] = useState<Date | null>(null);
+  const [role, setRole] = useState<'Customer' | 'Courier'>('Customer');
+
 
   const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -64,6 +66,7 @@ const [tempDate, setTempDate] = useState<Date>(birthDate || new Date());
     }
 
 
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -81,6 +84,7 @@ const [tempDate, setTempDate] = useState<Date>(birthDate || new Date());
         name: name.trim(),
         email: email.trim(),
         date_of_birth: birthDate!.toISOString().split('T')[0],
+        role: role,
       });
 
       onNext(response.access_token);
@@ -236,6 +240,29 @@ const [tempDate, setTempDate] = useState<Date>(birthDate || new Date());
   </View>
 </Modal>
 
+      {/* Role Selection */}
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>نوع الحساب</Text>
+        <View style={styles.roleContainer}>
+          <Pressable
+            style={[styles.roleButton, role === 'Customer' && styles.roleButtonActive]}
+            onPress={() => setRole('Customer')}
+          >
+            <Feather name="user" size={20} color={role === 'Customer' ? '#FFF' : '#6B7280'} />
+            <Text style={[styles.roleText, role === 'Customer' && styles.roleTextActive]}>عميل</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.roleButton, role === 'Courier' && styles.roleButtonActive]}
+            onPress={() => setRole('Courier')}
+          >
+            <Feather name="truck" size={20} color={role === 'Courier' ? '#FFF' : '#6B7280'} />
+            <Text style={[styles.roleText, role === 'Courier' && styles.roleTextActive]}>مندوب</Text>
+          </Pressable>
+        </View>
+      </View>
+
+
+
       {/* API global error */}
       {errors.api && <Text style={styles.apiError}>{errors.api}</Text>}
 
@@ -301,6 +328,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   buttonText: { color: '#FFF', fontSize: 18, fontWeight: '900' },
+
+  roleContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  roleButton: {
+    flex: 1,
+    height: 52,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  roleButtonActive: {
+    backgroundColor: '#E0AAFF',
+    borderColor: '#E0AAFF',
+  },
+  roleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  roleTextActive: {
+    color: '#FFF',
+  },
 
   modalOverlay: {
     flex: 1,

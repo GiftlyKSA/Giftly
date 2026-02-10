@@ -32,6 +32,35 @@ class PaymentStatus(enum.Enum):
     FAILED = "failed"
     REFUNDED = "refunded"
 
+class DepositRequestStatus(enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+class CourierBalanceAddition(Base):
+    __tablename__ = "courier_balance_additions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # User who paid
+    payment_method = Column(Enum(PaymentMethod), nullable=False)
+    balance_before = Column(Integer, nullable=False)  # Courier's wallet balance before addition
+    amount_to_add = Column(Integer, nullable=False)  # Amount added to courier's wallet
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), nullable=False)
+
+    # Relationships
+    invoice = relationship("Invoice", backref="courier_balance_additions")
+    order = relationship("Order", backref="courier_balance_additions")
+    user = relationship("User", backref="courier_balance_additions")
+
+    __table_args__ = (
+        Index('idx_courier_balance_addition_invoice', 'invoice_id'),
+        Index('idx_courier_balance_addition_order', 'order_id'),
+        Index('idx_courier_balance_addition_user', 'user_id', 'created_at'),
+        Index('idx_courier_balance_addition_created', 'created_at'),
+    )
+
 class User(Base):
     __tablename__ = "users"
 
@@ -43,6 +72,8 @@ class User(Base):
     email = Column(String, unique=True, nullable=True)
     name = Column(String, nullable=True)
     date_of_birth = Column(Date, nullable=True)
+    national_id = Column(String, nullable=True)  # Optional for customers, mandatory for couriers
+    passport_id = Column(String, nullable=True)  # Optional for customers, mandatory for couriers
     is_verified = Column(Boolean, default=False)
     otp = Column(String, nullable=True)
     otp_created_at = Column(DateTime, default=func.now())
@@ -305,4 +336,23 @@ class Promocode(Base):
         Index('idx_promocode_code', 'code'),
         Index('idx_promocode_active', 'active', 'valid_until'),
         Index('idx_promocode_valid', 'active', 'valid_until', 'usage_limit', 'usage_count'),
+    )
+
+class DepositRequest(Base):
+    __tablename__ = "deposit_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    courier_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(Enum(DepositRequestStatus), nullable=False, default=DepositRequestStatus.PENDING)
+    amount = Column(Integer, nullable=False)  # Amount in cents/halaym
+    wallet_balance_before = Column(Integer, nullable=False)  # Balance before request in cents/halaym
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), nullable=False)
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=func.now(), nullable=False)
+
+    # Relationship to courier
+    courier = relationship("User", backref="deposit_requests")
+
+    __table_args__ = (
+        Index('idx_deposit_request_courier', 'courier_id', 'created_at'),
+        Index('idx_deposit_request_status', 'status', 'created_at'),
     )

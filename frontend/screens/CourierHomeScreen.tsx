@@ -1,12 +1,16 @@
 
-import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Image, Dimensions } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet, Image, Dimensions, Alert, TextInput, RefreshControl } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../App';
+import { getAvailableOrdersForCourier, acceptOrder, getCourierActiveOrders, getCourierAllOrders, getWallet, requestWalletDeposit, updateUserDetails, OrderResponse, WalletResponse, getCourierStats, CourierStatsResponse } from '../api';
 
 interface Props {
   onLogout: () => void;
   onAcceptOrder: () => void;
+  onNavigateToChat?: (orderId: string) => void;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
   theme: {
@@ -47,20 +51,148 @@ const PORTFOLIO_IMAGES = [
   'https://picsum.photos/seed/gift4/400/400',
 ];
 
-export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, isDarkMode, toggleDarkMode, theme }) => {
+export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, onNavigateToChat, isDarkMode, toggleDarkMode, theme }) => {
   const insets = useSafeAreaInsets();
-  const [activeTab, setActiveTab] = useState<'available' | 'active' | 'wallet' | 'profile' | 'notifications'>('available');
+  const [activeTab, setActiveTab] = useState<'available' | 'active' | 'wallet' | 'profile' | 'notifications' | 'previous'>('available');
   const [portfolio, setPortfolio] = useState(PORTFOLIO_IMAGES);
+  const { userData, token } = useAuth();
 
-  // Simulated active orders for tracking
-  const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([
-    { id: '8742', item: 'باقة جوري + شوكولاتة', customer: 'محمد العتيبي', status: 'PREPARING', location: 'حي الياسمين، الرياض' }
-  ]);
+  // Real data states
+  const [availableOrders, setAvailableOrders] = useState<OrderResponse[]>([]);
+  const [activeOrders, setActiveOrders] = useState<OrderResponse[]>([]);
+  const [previousOrders, setPreviousOrders] = useState<OrderResponse[]>([]);
+  const [wallet, setWallet] = useState<WalletResponse | null>(null);
+  const [courierStats, setCourierStats] = useState<CourierStatsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [depositAmount, setDepositAmount] = useState('');
 
-  const updateOrderStatus = (orderId: string, newStatus: OrderStatus) => {
-    setActiveOrders(prev => prev.map(order =>
-      order.id === orderId ? { ...order, status: newStatus } : order
-    ));
+  // Load data on component mount and when tab changes
+  useEffect(() => {
+    if (token) {
+      loadData();
+    }
+  }, [activeTab, token]);
+
+  const loadData = async () => {
+    if (!token) {
+      console.log('CourierHomeScreen: No token available');
+      return;
+    }
+
+    console.log(`CourierHomeScreen: Loading data for tab: ${activeTab}`);
+
+    try {
+      // Always fetch courier stats for the stats display
+      console.log('CourierHomeScreen: Fetching courier stats...');
+      const stats = await getCourierStats(token);
+      console.log('CourierHomeScreen: Received courier stats:', stats);
+      setCourierStats(stats);
+
+      if (activeTab === 'available') {
+        // Available orders: Use dedicated API for available orders
+        console.log('CourierHomeScreen: Fetching available orders...');
+        const orders = await getAvailableOrdersForCourier(token);
+        console.log(`CourierHomeScreen: Received ${orders.length} available orders`);
+        setAvailableOrders(orders);
+      } else if (activeTab === 'active') {
+        // Active orders: Use dedicated API for active orders
+        console.log('CourierHomeScreen: Fetching active orders...');
+        const orders = await getCourierActiveOrders(token);
+        console.log(`CourierHomeScreen: Received ${orders.length} active orders`);
+        setActiveOrders(orders);
+      } else if (activeTab === 'wallet') {
+        console.log('CourierHomeScreen: Fetching wallet data...');
+        const walletData = await getWallet(token);
+        console.log('CourierHomeScreen: Received wallet data:', walletData);
+        setWallet(walletData);
+      } else if (activeTab === 'previous') {
+        // Previous orders: Use dedicated API for all courier orders
+        console.log('CourierHomeScreen: Fetching previous orders...');
+        const orders = await getCourierAllOrders(token);
+        console.log(`CourierHomeScreen: Received ${orders.length} total orders`);
+        // Filter for cancelled and done orders
+        const previousOrdersFiltered = orders.filter(order =>
+          order.status === 'cancelled' || order.status === 'done'
+        );
+        console.log(`CourierHomeScreen: Filtered to ${previousOrdersFiltered.length} previous orders`);
+        setPreviousOrders(previousOrdersFiltered);
+      }
+    } catch (error) {
+      console.error('CourierHomeScreen: Error loading data:', error);
+      Alert.alert('خطأ', 'فشل في تحميل البيانات');
+    }
+  };
+
+  const handleAcceptOrder = async (orderId: string) => {
+    try {
+      setLoading(true);
+      if (!token) return;
+
+      await acceptOrder(token, orderId);
+      Alert.alert('نجح', 'تم قبول الطلب بنجاح');
+
+      // Switch to active orders tab to show the newly accepted order
+      setActiveTab('active');
+
+      // Refresh data for the active tab
+      loadData();
+    } catch (error) {
+      console.error('Error accepting order:', error);
+      Alert.alert('خطأ', 'فشل في قبول الطلب');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRequestDeposit = async () => {
+    const amount = parseFloat(depositAmount);
+    if (isNaN(amount) || amount < 10) {
+      Alert.alert('خطأ', 'يجب أن يكون المبلغ 10 ريال على الأقل');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      if (!token) return;
+
+      await requestWalletDeposit(token, amount);
+      Alert.alert('نجح', 'تم إرسال طلب الشحن بنجاح');
+      setDepositAmount('');
+      // Refresh wallet data
+      loadData();
+    } catch (error) {
+      console.error('Error requesting deposit:', error);
+      Alert.alert('خطأ', 'فشل في طلب الشحن');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateProfile = async (profileData: any) => {
+    try {
+      setLoading(true);
+      if (!token) return;
+
+      await updateUserDetails(token, profileData);
+      Alert.alert('نجح', 'تم تحديث الملف الشخصي بنجاح');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      Alert.alert('خطأ', 'فشل في تحديث الملف الشخصي');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await loadData();
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   return (
@@ -78,28 +210,39 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
             </View>
             <View>
               <Text style={[styles.headerSubtitle, { color: theme.secondaryTextColor }]}>مندوب هديتي</Text>
-              <Text style={[styles.headerTitle, { color: theme.textColor }]}>أحمد بن فهد</Text>
+              <Text style={[styles.headerTitle, { color: theme.textColor }]}>{userData?.name || 'مندوب'}</Text>
             </View>
           </View>
         </View>
-        <Pressable onPress={onLogout} style={styles.logoutButton}>
-          <Feather name="log-out" size={20} color="#EF4444" />
-        </Pressable>
+
       </View>
 
       {/* Scrollable Content Area */}
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#E0AAFF']}
+            tintColor="#E0AAFF"
+          />
+        }
+      >
         {(activeTab === 'available' || activeTab === 'active') && (
           <View>
             {/* Stats Summary */}
             <View style={styles.statsContainer}>
               <View style={styles.statCard}>
                 <Text style={styles.statLabel}>أرباح اليوم</Text>
-                <Text style={styles.statValue}>145 <Text style={styles.currency}>ر.س</Text></Text>
+                <Text style={styles.statValue}>
+                  {courierStats ? (courierStats.todays_earnings / 100).toFixed(2) : '0.00'} <Text style={styles.currency}>ر.س</Text>
+                </Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={styles.statLabel}>طلبات مكتملة</Text>
-                <Text style={styles.statValue}>8</Text>
+                <Text style={styles.statLabel}>طلبات نشطة</Text>
+                <Text style={styles.statValue}>{courierStats?.active_orders_count || 0}</Text>
               </View>
             </View>
 
@@ -123,27 +266,44 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
 
             <View style={styles.ordersContainer}>
               {activeTab === 'available' ? (
-                NEW_ORDERS.map(order => (
-                  <View key={order.id} style={styles.orderCard}>
-                    <View style={styles.orderHeader}>
-                      <View style={styles.orderLeft}>
-                        <View style={styles.packageIcon}>
-                          <Feather name="package" size={24} color="#E0AAFF" />
+                availableOrders.length > 0 ? (
+                  availableOrders.map(order => (
+                    <View key={order.id} style={styles.orderCard}>
+                      <View style={styles.orderHeader}>
+                        <View style={styles.orderLeft}>
+                          <View style={styles.packageIcon}>
+                            <Feather name="package" size={24} color="#E0AAFF" />
+                          </View>
+                          <View>
+                            <Text style={styles.orderTitle}>طلب {order.order_id}</Text>
+                            <Text style={styles.orderSubtitle}>{order.description || 'وصف غير محدد'}</Text>
+                          </View>
                         </View>
-                        <View>
-                          <Text style={styles.orderTitle}>طلب #{order.id}</Text>
-                          <Text style={styles.orderSubtitle}>{order.item}</Text>
-                        </View>
+                        <Text style={styles.orderPrice}>
+                          {order.invoice ? `${(order.invoice.full_amount / 100).toFixed(2)} ر.س` : 'غير محدد'}
+                        </Text>
                       </View>
-                      <Text style={styles.orderPrice}>{order.price} ر.س</Text>
+                      <View style={styles.orderFooter}>
+                        <Pressable
+                          onPress={() => handleAcceptOrder(order.order_id)}
+                          disabled={loading}
+                          style={[styles.acceptButton, loading && { opacity: 0.6 }]}
+                        >
+                          <Text style={styles.acceptButtonText}>
+                            {loading ? 'جاري المعالجة...' : 'قبول الطلب'}
+                          </Text>
+                        </Pressable>
+                      </View>
                     </View>
-                    <View style={styles.orderFooter}>
-                      <Pressable onPress={onAcceptOrder} style={styles.acceptButton}>
-                        <Text style={styles.acceptButtonText}>قبول الطلب</Text>
-                      </Pressable>
+                  ))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <View style={styles.emptyIcon}>
+                      <Feather name="package" size={32} color="#9CA3AF" />
                     </View>
+                    <Text style={styles.emptyText}>لا توجد طلبات متاحة حالياً</Text>
                   </View>
-                ))
+                )
               ) : (
                 activeOrders.length > 0 ? (
                   activeOrders.map(order => (
@@ -154,8 +314,13 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
                             <Feather name="package" size={20} color="#E0AAFF" />
                           </View>
                           <View>
-                            <Text style={styles.activeOrderTitle}>طلب #{order.id}</Text>
-                            <Text style={styles.activeOrderSubtitle}>{order.customer}</Text>
+                            <Text style={styles.activeOrderTitle}>طلب {order.order_id}</Text>
+                            <Text style={styles.activeOrderSubtitle}>
+                              {order.status === 'received by courier' ? 'تم الاستلام' :
+                               order.status === 'in progress to do' ? 'قيد التجهيز' :
+                               order.status === 'in progress to deliver' ? 'قيد التوصيل' :
+                               order.status === 'done' ? 'مكتمل' : order.status}
+                            </Text>
                           </View>
                         </View>
                         <View style={styles.activeBadge}>
@@ -164,35 +329,43 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
                       </View>
 
                       <View style={styles.progressSection}>
-                        <Text style={styles.progressTitle}>تحديث مسار الطلب</Text>
+                        <Text style={styles.progressTitle}>حالة الطلب</Text>
                         <View style={styles.progressContainer}>
                           <View style={styles.progressBar}>
                             <View style={[styles.progressFill, {
-                              width: order.status === 'PREPARING' ? '0%' :
-                                     order.status === 'DELIVERING' ? '50%' : '100%'
+                              width: order.status === 'received by courier' ? '25%' :
+                                     order.status === 'in progress to do' ? '50%' :
+                                     order.status === 'in progress to deliver' ? '75%' : '100%'
                             }]} />
                           </View>
 
-                          <Pressable onPress={() => updateOrderStatus(order.id, 'PREPARING')} style={[styles.progressStep, order.status === 'PREPARING' && styles.activeStep]}>
-                            <View style={[styles.stepIcon, order.status === 'PREPARING' && styles.activeStepIcon]}>
-                              <Feather name="gift" size={18} color={order.status === 'PREPARING' ? 'white' : '#9CA3AF'} />
+                          <View style={styles.progressStep}>
+                            <View style={[styles.stepIcon, order.status === 'received by courier' && styles.activeStepIcon]}>
+                              <Feather name="check-circle" size={18} color={order.status === 'received by courier' ? 'white' : '#9CA3AF'} />
                             </View>
-                            <Text style={[styles.stepText, order.status === 'PREPARING' && styles.activeStepText]}>تجهيز الهدية</Text>
-                          </Pressable>
+                            <Text style={[styles.stepText, order.status === 'received by courier' && styles.activeStepText]}>تم الاستلام</Text>
+                          </View>
 
-                          <Pressable onPress={() => updateOrderStatus(order.id, 'DELIVERING')} style={[styles.progressStep, order.status === 'DELIVERING' && styles.activeStep]}>
-                            <View style={[styles.stepIcon, order.status === 'DELIVERING' && styles.activeStepIcon]}>
-                              <Feather name="truck" size={18} color={order.status === 'DELIVERING' ? 'white' : '#9CA3AF'} />
+                          <View style={styles.progressStep}>
+                            <View style={[styles.stepIcon, order.status === 'in progress to do' && styles.activeStepIcon]}>
+                              <Feather name="gift" size={18} color={order.status === 'in progress to do' ? 'white' : '#9CA3AF'} />
                             </View>
-                            <Text style={[styles.stepText, order.status === 'DELIVERING' && styles.activeStepText]}>في الطريق</Text>
-                          </Pressable>
+                            <Text style={[styles.stepText, order.status === 'in progress to do' && styles.activeStepText]}>تجهيز الهدية</Text>
+                          </View>
 
-                          <Pressable onPress={() => updateOrderStatus(order.id, 'DELIVERED')} style={[styles.progressStep, order.status === 'DELIVERED' && styles.activeStep]}>
-                            <View style={[styles.stepIcon, order.status === 'DELIVERED' && styles.activeStepIcon]}>
-                              <Feather name="check-circle" size={18} color={order.status === 'DELIVERED' ? 'white' : '#9CA3AF'} />
+                          <View style={styles.progressStep}>
+                            <View style={[styles.stepIcon, order.status === 'in progress to deliver' && styles.activeStepIcon]}>
+                              <Feather name="truck" size={18} color={order.status === 'in progress to deliver' ? 'white' : '#9CA3AF'} />
                             </View>
-                            <Text style={[styles.stepText, order.status === 'DELIVERED' && styles.activeStepText]}>تم التسليم</Text>
-                          </Pressable>
+                            <Text style={[styles.stepText, order.status === 'in progress to deliver' && styles.activeStepText]}>في الطريق</Text>
+                          </View>
+
+                          <View style={styles.progressStep}>
+                            <View style={[styles.stepIcon, order.status === 'done' && styles.activeStepIcon]}>
+                              <Feather name="check-circle" size={18} color={order.status === 'done' ? 'white' : '#9CA3AF'} />
+                            </View>
+                            <Text style={[styles.stepText, order.status === 'done' && styles.activeStepText]}>تم التسليم</Text>
+                          </View>
                         </View>
                       </View>
 
@@ -201,7 +374,7 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
                           <Feather name="map" size={16} color="#E0AAFF" />
                           <Text style={styles.mapButtonText}>فتح الخريطة</Text>
                         </Pressable>
-                        <Pressable onPress={onAcceptOrder} style={styles.chatButton}>
+                        <Pressable onPress={() => onNavigateToChat?.(order.order_id)} style={styles.chatButton}>
                           <Text style={styles.chatButtonText}>الدردشة مع العميل</Text>
                         </Pressable>
                       </View>
@@ -260,8 +433,84 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
             <View style={styles.walletCard}>
               <View style={styles.walletContent}>
                 <Text style={styles.walletLabel}>الرصيد المتاح</Text>
-                <Text style={styles.walletAmount}>241.50 <Text style={styles.walletCurrency}>ر.س</Text></Text>
+                <Text style={styles.walletAmount}>
+                  {wallet ? (wallet.balance / 100).toFixed(2) : '0.00'} <Text style={styles.walletCurrency}>ر.س</Text>
+                </Text>
               </View>
+            </View>
+
+            <View style={styles.depositSection}>
+              <Text style={styles.depositTitle}>طلب شحن المحفظة</Text>
+              <Text style={styles.depositSubtitle}>الحد الأدنى 10 ريال (دقة إلى منزلتين عشريتين)</Text>
+
+              <View style={styles.depositInputContainer}>
+                <TextInput
+                  style={styles.depositInput}
+                  placeholder="أدخل المبلغ"
+                  keyboardType="decimal-pad"
+                  value={depositAmount}
+                  onChangeText={setDepositAmount}
+                />
+                <Text style={styles.depositCurrency}>ر.س</Text>
+              </View>
+
+              <Pressable
+                onPress={handleRequestDeposit}
+                disabled={loading}
+                style={[styles.depositButton, loading && { opacity: 0.6 }]}
+              >
+                <Text style={styles.depositButtonText}>
+                  {loading ? 'جاري الإرسال...' : 'إرسال طلب الشحن'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {activeTab === 'previous' && (
+          <View style={styles.previousOrdersContainer}>
+            <Text style={styles.previousOrdersTitle}>طلباتك السابقة</Text>
+            <View style={styles.previousOrdersList}>
+              {previousOrders.length > 0 ? (
+                previousOrders.map(order => (
+                  <View key={order.id} style={styles.previousOrderCard}>
+                    <View style={styles.previousOrderHeader}>
+                      <View style={styles.previousOrderLeft}>
+                        <View style={[styles.previousOrderIcon, {
+                          backgroundColor: order.status === 'done' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'
+                        }]}>
+                          <Feather
+                            name={order.status === 'done' ? 'check-circle' : 'x-circle'}
+                            size={20}
+                            color={order.status === 'done' ? '#10B981' : '#EF4444'}
+                          />
+                        </View>
+                        <View>
+                          <Text style={styles.previousOrderTitle}>طلب {order.order_id}</Text>
+                          <Text style={styles.previousOrderSubtitle}>
+                            {order.status === 'done' ? 'مكتمل' : order.status === 'cancelled' ? 'ملغي' : order.status}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.previousOrderPrice}>
+                        {order.invoice ? `${(order.invoice.full_amount / 100).toFixed(2)} ر.س` : 'غير محدد'}
+                      </Text>
+                    </View>
+                    <View style={styles.previousOrderFooter}>
+                      <Text style={styles.previousOrderDate}>
+                        {new Date(order.created_at).toLocaleDateString('ar-SA')}
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <View style={styles.emptyState}>
+                  <View style={styles.emptyIcon}>
+                    <Feather name="clock" size={32} color="#9CA3AF" />
+                  </View>
+                  <Text style={styles.emptyText}>لا توجد طلبات سابقة</Text>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -274,7 +523,7 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
                 style={styles.profileAvatar}
               />
             </View>
-            <Text style={[styles.profileName, { color: theme.textColor }]}>أحمد بن فهد</Text>
+            <Text style={[styles.profileName, { color: theme.textColor }]}>{userData?.name || 'مندوب'}</Text>
             <View style={styles.ratingContainer}>
               <Feather name="star" size={18} color="#F59E0B" />
               <Text style={[styles.ratingText, { color: theme.textColor }]}>4.8 (120 تقييم)</Text>
@@ -296,6 +545,16 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
                   </View>
                 </Pressable>
 
+                <Pressable onPress={() => setActiveTab('previous')} style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                  <View style={styles.menuItemContent}>
+                    <View style={[styles.menuIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                      <Feather name="clock" size={20} color="#9CA3AF" />
+                    </View>
+                    <Text style={[styles.menuLabel, { color: theme.textColor }]}>طلباتك السابقة</Text>
+                  </View>
+                  <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
+                </Pressable>
+
                 <Pressable style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                   <View style={styles.menuItemContent}>
                     <View style={[styles.menuIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
@@ -304,6 +563,15 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, is
                     <Text style={[styles.menuLabel, { color: theme.textColor }]}>مركز المساعدة والدعم</Text>
                   </View>
                   <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
+                </Pressable>
+
+                <Pressable onPress={onLogout} style={styles.logoutButton}>
+                  <View style={styles.menuItemContent}>
+                    <View style={styles.logoutIcon}>
+                      <Feather name="log-out" size={20} color="#EF4444" />
+                    </View>
+                    <Text style={styles.logoutText}>تسجيل الخروج</Text>
+                  </View>
                 </Pressable>
               </View>
             </View>
@@ -961,5 +1229,146 @@ const styles = StyleSheet.create({
   },
   toggleKnobActive: {
     transform: [{ translateX: 20 }],
+  },
+  depositSection: {
+    marginTop: 32,
+  },
+  depositTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    textAlign: 'right',
+    marginBottom: 8,
+  },
+  depositSubtitle: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'right',
+    marginBottom: 24,
+  },
+  depositInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  depositInput: {
+    flex: 1,
+    fontSize: 16,
+    textAlign: 'right',
+    color: '#1F2937',
+  },
+  depositCurrency: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#E0AAFF',
+    marginLeft: 8,
+  },
+  depositButton: {
+    backgroundColor: '#E0AAFF',
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  depositButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  previousOrdersContainer: {
+    padding: 24,
+  },
+  previousOrdersTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#1F2937',
+    textAlign: 'right',
+    marginBottom: 24,
+  },
+  previousOrdersList: {
+    gap: 16,
+  },
+  previousOrderCard: {
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F9FAFB',
+  },
+  previousOrderHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  previousOrderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  previousOrderIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previousOrderTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  previousOrderSubtitle: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  previousOrderPrice: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#E0AAFF',
+  },
+  previousOrderFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F9FAFB',
+  },
+  previousOrderDate: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontWeight: 'bold',
+  },
+  logoutButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  logoutIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoutText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#EF4444',
   },
 });

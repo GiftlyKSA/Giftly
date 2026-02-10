@@ -150,21 +150,49 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
         </View>
       </View>
 
-      <View style={styles.settingsSection}>
-        <Text style={styles.sectionTitle}>إعدادات الحساب</Text>
+      {/* Show different content based on user role */}
+      {userData?.role === 'Courier' ? (
+        // Courier Profile - Read-only
+        <View style={styles.settingsSection}>
+          <Text style={styles.sectionTitle}>معلومات المندوب</Text>
 
-        <View style={styles.menuItems}>
-          {menuItems.map((item, idx) => (
-            <Pressable key={idx} onPress={item.action} style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-              <View style={styles.menuItemContent}>
-                <View style={[styles.menuIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
-                  <Feather name={item.icon as any} size={20} color="#9CA3AF" />
+          <View style={styles.infoSection}>
+            <View style={[styles.infoItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+              <View style={styles.infoItemContent}>
+                <View style={[styles.infoIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                  <Feather name="user" size={20} color="#9CA3AF" />
                 </View>
-                <Text style={[styles.menuLabel, { color: theme.textColor }]}>{item.label}</Text>
+                <View style={styles.infoTextContainer}>
+                  <Text style={[styles.infoLabel, { color: theme.secondaryTextColor }]}>الاسم</Text>
+                  <Text style={[styles.infoValue, { color: theme.textColor }]}>{userData.name}</Text>
+                </View>
               </View>
-              <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
-            </Pressable>
-          ))}
+            </View>
+
+            <View style={[styles.infoItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+              <View style={styles.infoItemContent}>
+                <View style={[styles.infoIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                  <Feather name="credit-card" size={20} color="#9CA3AF" />
+                </View>
+                <View style={styles.infoTextContainer}>
+                  <Text style={[styles.infoLabel, { color: theme.secondaryTextColor }]}>رقم الهوية الوطنية</Text>
+                  <Text style={[styles.infoValue, { color: theme.textColor }]}>{userData.national_id || 'غير محدد'}</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={[styles.infoItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+              <View style={styles.infoItemContent}>
+                <View style={[styles.infoIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                  <Feather name="map-pin" size={20} color="#9CA3AF" />
+                </View>
+                <View style={styles.infoTextContainer}>
+                  <Text style={[styles.infoLabel, { color: theme.secondaryTextColor }]}>رقم جواز السفر</Text>
+                  <Text style={[styles.infoValue, { color: theme.textColor }]}>{userData.passport_id || 'غير محدد'}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
 
           <Pressable onPress={toggleDarkMode} style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
             <View style={styles.menuItemContent}>
@@ -187,17 +215,67 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
             </View>
             <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
           </Pressable>
-        </View>
 
-        <Pressable onPress={onLogout} style={styles.logoutButton}>
-          <View style={styles.menuItemContent}>
-            <View style={styles.logoutIcon}>
-              <Feather name="log-out" size={20} color="#EF4444" />
+          <Pressable onPress={onLogout} style={styles.logoutButton}>
+            <View style={styles.menuItemContent}>
+              <View style={styles.logoutIcon}>
+                <Feather name="log-out" size={20} color="#EF4444" />
+              </View>
+              <Text style={styles.logoutText}>تسجيل الخروج</Text>
             </View>
-            <Text style={styles.logoutText}>تسجيل الخروج</Text>
+          </Pressable>
+        </View>
+      ) : (
+        // Customer Profile - Editable
+        <View style={styles.settingsSection}>
+          <Text style={styles.sectionTitle}>إعدادات الحساب</Text>
+
+          <View style={styles.menuItems}>
+            {menuItems.map((item, idx) => (
+              <Pressable key={idx} onPress={item.action} style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                <View style={styles.menuItemContent}>
+                  <View style={[styles.menuIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                    <Feather name={item.icon as any} size={20} color="#9CA3AF" />
+                  </View>
+                  <Text style={[styles.menuLabel, { color: theme.textColor }]}>{item.label}</Text>
+                </View>
+                <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
+              </Pressable>
+            ))}
+
+            <Pressable onPress={toggleDarkMode} style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+              <View style={styles.menuItemContent}>
+                <View style={[styles.menuIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                  <Feather name={isDarkMode ? "sun" : "moon"} size={20} color="#9CA3AF" />
+                </View>
+                <Text style={[styles.menuLabel, { color: theme.textColor }]}>الوضع الداكن (Dark Mode)</Text>
+              </View>
+              <View style={[styles.toggle, isDarkMode && styles.toggleActive]}>
+                <View style={[styles.toggleKnob, isDarkMode && styles.toggleKnobActive]} />
+              </View>
+            </Pressable>
+
+            <Pressable style={[styles.menuItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+              <View style={styles.menuItemContent}>
+                <View style={[styles.menuIcon, { backgroundColor: isDarkMode ? '#374151' : '#F9FAFB' }]}>
+                  <Feather name="help-circle" size={20} color="#9CA3AF" />
+                </View>
+                <Text style={[styles.menuLabel, { color: theme.textColor }]}>مركز المساعدة والدعم</Text>
+              </View>
+              <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
+            </Pressable>
           </View>
-        </Pressable>
-      </View>
+
+          <Pressable onPress={onLogout} style={styles.logoutButton}>
+            <View style={styles.menuItemContent}>
+              <View style={styles.logoutIcon}>
+                <Feather name="log-out" size={20} color="#EF4444" />
+              </View>
+              <Text style={styles.logoutText}>تسجيل الخروج</Text>
+            </View>
+          </Pressable>
+        </View>
+      )}
 
       <Modal
         visible={showEditModal}
@@ -1035,5 +1113,50 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  infoSection: {
+    gap: 12,
+    marginBottom: 24,
+  },
+  infoItem: {
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F9FAFB',
+  },
+  infoItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  infoIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoTextContainer: {
+    flex: 1,
+  },
+  infoLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#9CA3AF',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  infoValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
   },
 });

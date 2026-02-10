@@ -42,6 +42,8 @@ class OTPVerify(BaseModel):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     date_of_birth: Optional[date] = None
+    national_id: Optional[str] = None
+    passport_id: Optional[str] = None
 
     @validator('phone_number')
     def validate_phone_number(cls, v):
@@ -84,6 +86,8 @@ class UpdateUserProfile(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     date_of_birth: Optional[date] = None
+    national_id: Optional[str] = None
+    passport_id: Optional[str] = None
 
     @validator('name')
     def validate_name(cls, v):
@@ -261,6 +265,18 @@ class ChargeWalletRequest(BaseModel):
             raise ValueError('Minimum charge amount is 10 riyals')
         if not isinstance(v, int):
             raise ValueError('Amount must be an integer')
+        return v
+
+class RequestWalletDeposit(BaseModel):
+    amount: float  # Amount to request in riyals with decimals
+
+    @validator('amount')
+    def validate_amount(cls, v):
+        if v < 10:
+            raise ValueError('Minimum deposit amount is 10 riyals')
+        # Check for exactly 2 decimal places
+        if round(v, 2) != v:
+            raise ValueError('Amount must have exactly 2 decimal places')
         return v
 
 # Payment schemas
