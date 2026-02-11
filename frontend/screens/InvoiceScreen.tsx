@@ -9,7 +9,7 @@ import { WebView } from 'react-native-webview';
 import { useAuth } from '../App';
 import { InvoiceResponse } from '../api';
 
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://971c-37-106-14-206.ngrok-free.app';
+const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://https://306c-37-104-110-165.ngrok-free.app';
 
 interface Props {
   onBack: () => void;
@@ -28,6 +28,10 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
   const [showErrorOverlay, setShowErrorOverlay] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
+  const [couponCode, setCouponCode] = useState('');
+  const [couponDiscount, setCouponDiscount] = useState(0);
+  const [finalAmount, setFinalAmount] = useState(invoice.full_amount);
+  const [verifyingCoupon, setVerifyingCoupon] = useState(false);
 
   useEffect(() => {
     fetchInvoice();
@@ -449,12 +453,87 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
               <View style={styles.confirmationModalBody}>
                 <Feather name="credit-card" size={48} color="#E0AAFF" />
                 <Text style={styles.confirmationTitle}>تأكيد الدفع</Text>
+
+                {/* Coupon Input */}
+                <View style={styles.couponSection}>
+                  <Text style={styles.couponLabel}>كوبون الخصم (اختياري)</Text>
+                  <View style={styles.couponInputContainer}>
+                    <TextInput
+                      style={styles.couponInput}
+                      value={couponCode}
+                      onChangeText={setCouponCode}
+                      placeholder="أدخل رمز الكوبون"
+                      placeholderTextColor="#9CA3AF"
+                      autoCapitalize="characters"
+                    />
+                    <Pressable
+                      onPress={async () => {
+                        if (!couponCode.trim()) {
+                          Alert.alert('خطأ', 'يرجى إدخال رمز الكوبون');
+                          return;
+                        }
+
+                        setVerifyingCoupon(true);
+                        try {
+                          const formData = new FormData();
+                          formData.append('coupon_code', couponCode.trim());
+                          formData.append('invoice_id', invoice.id.toString());
+
+                          const response = await fetch(`${API_BASE_URL}/invoices/verify-coupon`, {
+                            method: 'POST',
+                            headers: {
+                              'Authorization': `Bearer ${token}`,
+                            },
+                            body: formData,
+                          });
+
+                          const result = await response.json();
+
+                          if (!response.ok) {
+                            throw new Error(result.detail || 'فشل في التحقق من الكوبون');
+                          }
+
+                          setCouponDiscount(result.discount_amount);
+                          setFinalAmount(result.final_amount);
+                          Alert.alert('نجح', `تم تطبيق الخصم: ${result.discount_amount.toFixed(2)} ريال\nالمبلغ النهائي: ${result.final_amount.toFixed(2)} ريال`);
+                        } catch (error: any) {
+                          Alert.alert('خطأ', error.message || 'فشل في التحقق من الكوبون');
+                          setCouponCode('');
+                          setCouponDiscount(0);
+                          setFinalAmount(invoice.full_amount);
+                        } finally {
+                          setVerifyingCoupon(false);
+                        }
+                      }}
+                      disabled={verifyingCoupon}
+                      style={[styles.verifyCouponButton, verifyingCoupon && { opacity: 0.6 }]}
+                    >
+                      {verifyingCoupon ? (
+                        <ActivityIndicator size="small" color="white" />
+                      ) : (
+                        <Text style={styles.verifyCouponText}>تحقق</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                  {couponDiscount > 0 && (
+                    <Text style={styles.discountText}>
+                      الخصم المطبق: {couponDiscount.toFixed(2)} ريال
+                    </Text>
+                  )}
+                </View>
+
                 <Text style={styles.confirmationMessage}>
-                  هل أنت متأكد من رغبتك في دفع {invoice.full_amount.toFixed(2)} ريال من المحفظة؟
+                  هل أنت متأكد من رغبتك في دفع {finalAmount.toFixed(2)} ريال من المحفظة؟
+                  {couponDiscount > 0 && `\n(المبلغ الأصلي: ${invoice.full_amount.toFixed(2)} ريال)`}
                 </Text>
                 <View style={styles.confirmationButtons}>
                   <Pressable
-                    onPress={() => setShowPaymentConfirmation(false)}
+                    onPress={() => {
+                      setShowPaymentConfirmation(false);
+                      setCouponCode('');
+                      setCouponDiscount(0);
+                      setFinalAmount(invoice.full_amount);
+                    }}
                     style={styles.cancelButton}
                   >
                     <Text style={styles.cancelButtonText}>لا</Text>
@@ -464,13 +543,17 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
                       setShowPaymentConfirmation(false);
                       try {
                         const { payWithWallet } = await import('../api');
-                        const result = await payWithWallet(token, invoice.id);
+                        const result = await payWithWallet(token, invoice.id, couponCode.trim() || undefined);
 
                         setShowSuccessOverlay(true);
                         setTimeout(() => {
                           setShowSuccessOverlay(false);
                           // Refresh invoice to show paid status
                           fetchInvoice();
+                          // Reset coupon state
+                          setCouponCode('');
+                          setCouponDiscount(0);
+                          setFinalAmount(invoice.full_amount);
                         }, 3000);
                       } catch (error: any) {
                         setErrorMessage(error.message || 'حدث خطأ أثناء الدفع');
@@ -1168,5 +1251,53 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: 'white',
+  },
+  couponSection: {
+    width: '100%',
+    marginBottom: 24,
+  },
+  couponLabel: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    textAlign: 'right',
+    marginBottom: 8,
+  },
+  couponInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  couponInput: {
+    flex: 1,
+    height: 48,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: '#1F2937',
+    textAlign: 'right',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  verifyCouponButton: {
+    backgroundColor: '#E0AAFF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verifyCouponText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  discountText: {
+    fontSize: 14,
+    color: '#10B981',
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

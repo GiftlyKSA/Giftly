@@ -7,24 +7,24 @@ import base64
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models import User, Conversation, Message, JWTToken
+from models import User, Conversation, Message
 from fastapi.responses import JSONResponse
 import os
-import asyncio
-import json
-from typing import Dict, Set
 from jose import JWTError, jwt
 from config import settings
+from websocket_manager import manager
+from contextlib import asynccontextmanager
 
 print(f"Current working directory: {os.getcwd()}")
 print(f"Database URL: {engine.url}")
 
-app = FastAPI()
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
@@ -97,198 +97,157 @@ def read_root():
     return {"message": "Welcome to the API"}
 
 
-class ConnectionManager:
-    def __init__(self):
-        # conversation_id -> set of websockets
-        self.active_connections: Dict[int, Set[WebSocket]] = {}
-
-    async def connect(self, websocket: WebSocket, conversation_id: int, user_id: int):
-        await websocket.accept()
-        if conversation_id not in self.active_connections:
-            self.active_connections[conversation_id] = set()
-        self.active_connections[conversation_id].add(websocket)
-
-    def disconnect(self, websocket: WebSocket, conversation_id: int):
-        if conversation_id in self.active_connections:
-            self.active_connections[conversation_id].discard(websocket)
-            if not self.active_connections[conversation_id]:
-                del self.active_connections[conversation_id]
-
-    async def broadcast_to_conversation(self, message: dict, conversation_id: int, exclude_websocket: WebSocket = None):
-        if conversation_id in self.active_connections:
-            for connection in self.active_connections[conversation_id]:
-                if connection != exclude_websocket:
-                    try:
-                        await connection.send_json(message)
-                    except:
-                        # Connection might be closed, remove it
-                        self.active_connections[conversation_id].discard(connection)
 
 
-manager = ConnectionManager()
 
-
-async def get_current_user_from_token(token: str, db: AsyncSession) -> User:
-    """Extract user from JWT token for WebSocket authentication"""
-    print(f"WebSocket auth: Validating token (length: {len(token)})")
-
+async def get_user_from_token(token: str) -> User:
+    """Extract user from JWT token for WebSocket authentication (stateless)"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
     )
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        phone_number: str = payload.get("sub")
-        token_type: str = payload.get("type")
-        is_temp: bool = payload.get("temp", False)
-
-        print(f"WebSocket auth: Token payload - phone: {phone_number}, type: {token_type}, temp: {is_temp}")
-
-        if phone_number is None:
-            print("WebSocket auth: No phone number in token")
+        sub: str = payload.get("sub")
+        if sub is None:
             raise credentials_exception
+        token_type: str = payload.get("type")
         if token_type == "refresh":
-            print("WebSocket auth: Refresh token not allowed")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Refresh token not allowed",
             )
-    except JWTError as e:
-        print(f"WebSocket auth: JWT decode error: {e}")
+        user_id = int(sub)
+    except (JWTError, ValueError):
         raise credentials_exception
 
-    # For temporary tokens (used during profile completion), skip database check
-    if not is_temp:
-        print("WebSocket auth: Checking permanent token in database")
-        # Check if token exists in database and is not revoked
-        jwt_token = await db.execute(
-            select(JWTToken).where(
-                JWTToken.access_token == token,
-                JWTToken.is_revoked == False
-            )
-        )
-        jwt_token = jwt_token.scalar_one_or_none()
+    phone_number = payload.get("phone_number")
+    role = payload.get("role")
+    name = payload.get("name")
+    is_verified = payload.get("is_verified", False)
 
-        if not jwt_token:
-            print("WebSocket auth: Token not found in database or revoked")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked or does not exist",
-            )
-
-        # Check if access token is expired
-        from datetime import datetime
-        if datetime.utcnow() > jwt_token.access_token_expires_at:
-            print(f"WebSocket auth: Token expired. Now: {datetime.utcnow()}, Expires: {jwt_token.access_token_expires_at}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access token expired",
-            )
-        print("WebSocket auth: Token validated successfully")
-    else:
-        print("WebSocket auth: Temporary token - skipping database check")
-
-    user = await db.execute(select(User).where(User.phone_number == phone_number))
-    user = user.scalar_one_or_none()
-    if user is None:
-        print(f"WebSocket auth: User not found for phone: {phone_number}")
-        raise credentials_exception
-
-    print(f"WebSocket auth: Authentication successful for user: {user.id} ({user.name})")
-    return user
+    return User(
+        id=user_id,
+        phone_number=phone_number,
+        role=role,
+        name=name,
+        is_verified=is_verified
+    )
 
 
-@app.websocket("/ws/chat/{conversation_id}")
-async def websocket_chat(
-    websocket: WebSocket,
-    conversation_id: int,
-    token: str
-):
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str):
     """
-    WebSocket endpoint for real-time chat.
-    Authenticates user with JWT token and ensures they are a participant in the conversation.
+    General WebSocket endpoint for real-time events.
+    Authenticates user with JWT token and handles room-based messaging.
     """
-    print(f"WebSocket: New connection attempt for conversation {conversation_id}")
+    print(f"WebSocket: New connection attempt")
 
     db = AsyncSessionLocal()
     user = None
     try:
         # Authenticate user
         print(f"WebSocket: Starting authentication for token length: {len(token)}")
-        user = await get_current_user_from_token(token, db)
+        user = await get_user_from_token(token)
 
-        # Get conversation and check authorization
-        conversation = await db.execute(
-            select(Conversation).where(Conversation.id == conversation_id)
-        )
-        conversation = conversation.scalar_one_or_none()
-
-        if not conversation:
-            print(f"WebSocket: Conversation {conversation_id} not found")
-            await websocket.close(code=1008, reason="Conversation not found")
-            return
-
-        # Check if user is a participant
-        if user.id not in [conversation.customer_id, conversation.courier_id]:
-            print(f"WebSocket: User {user.id} not authorized for conversation {conversation_id}")
-            await websocket.close(code=1008, reason="Not authorized for this conversation")
-            return
-
-        print(f"WebSocket: Authentication successful, connecting user {user.id} to conversation {conversation_id}")
+        print(f"WebSocket: Authentication successful, connecting user {user.id}")
         # Connect to WebSocket
-        await manager.connect(websocket, conversation_id, user.id)
+        await manager.connect(websocket, user.id)
+
+        # Auto-join user-specific and role-specific rooms
+        await manager.join_room(user.id, f"user_{user.id}")
+
+        # Join city-specific courier room if user is a courier
+        if user.role == "Courier":
+            # Get user's city_id from database
+            user_record = await db.execute(select(User).where(User.id == user.id))
+            user_data = user_record.scalar_one_or_none()
+            if user_data and user_data.city_id:
+                await manager.join_room(user.id, f"couriers_city_{user_data.city_id}")
+                print(f"WebSocket: Courier {user.id} joined city room couriers_city_{user_data.city_id}")
 
         while True:
             # Receive message from client
             data = await websocket.receive_json()
+            print(f"WebSocket: Received message from user {user.id}: {data}")
 
-            # Validate message structure
-            if not isinstance(data, dict) or "content" not in data:
-                continue
+            action = data.get("action")
 
-            message_type = data.get("message_type", "text")
+            if action == "join_room":
+                room = data.get("room")
+                if room:
+                    await manager.join_room(user.id, room)
+                    print(f"WebSocket: User {user.id} joined room {room}")
+                    await manager.send_to_user(user.id, {"action": "joined_room", "room": room})
 
-            # Create message in database
-            new_message = Message(
-                conversation_id=conversation_id,
-                sender_id=user.id,
-                content=data["content"],
-                message_type=message_type,
-                invoice_description=data.get("invoice_description"),
-                invoice_gift_price=data.get("invoice_gift_price"),
-                invoice_service_fee=data.get("invoice_service_fee"),
-                invoice_delivery_fee=data.get("invoice_delivery_fee"),
-                invoice_total=data.get("invoice_total")
-            )
+            elif action == "leave_room":
+                room = data.get("room")
+                if room:
+                    await manager.leave_room(user.id, room)
+                    print(f"WebSocket: User {user.id} left room {room}")
+                    await manager.send_to_user(user.id, {"action": "left_room", "room": room})
 
-            db.add(new_message)
-            await db.commit()
-            await db.refresh(new_message)
+            elif action == "send_message":
+                room = data.get("room")
+                message_content = data.get("content")
+                if room and message_content:
+                    # For chat messages, we need to handle database insertion
+                    if room.startswith("chat_"):
+                        try:
+                            conversation_id = int(room.split("_")[1])
+                            # Verify user is participant
+                            conversation = await db.execute(
+                                select(Conversation).where(Conversation.id == conversation_id)
+                            )
+                            conversation = conversation.scalar_one_or_none()
+                            if conversation and user.id in [conversation.customer_id, conversation.courier_id]:
+                                message_type = data.get("message_type", "text")
+                                # Create message in database
+                                new_message = Message(
+                                    conversation_id=conversation_id,
+                                    sender_id=user.id,
+                                    content=message_content,
+                                    message_type=message_type,
+                                    invoice_description=data.get("invoice_description"),
+                                    invoice_gift_price=data.get("invoice_gift_price"),
+                                    invoice_service_fee=data.get("invoice_service_fee"),
+                                    invoice_delivery_fee=data.get("invoice_delivery_fee"),
+                                    invoice_total=data.get("invoice_total")
+                                )
+                                db.add(new_message)
+                                await db.commit()
+                                await db.refresh(new_message)
 
-            # Prepare message to broadcast
-            message_data = {
-                "id": new_message.id,
-                "conversation_id": new_message.conversation_id,
-                "sender_id": new_message.sender_id,
-                "content": new_message.content,
-                "message_type": new_message.message_type,
-                "sent_at": new_message.sent_at.isoformat(),
-                "invoice_description": new_message.invoice_description,
-                "invoice_gift_price": new_message.invoice_gift_price,
-                "invoice_service_fee": new_message.invoice_service_fee,
-                "invoice_delivery_fee": new_message.invoice_delivery_fee,
-                "invoice_total": new_message.invoice_total
-            }
-
-            # Broadcast to other participants in the conversation
-            await manager.broadcast_to_conversation(message_data, conversation_id, websocket)
+                                # Prepare message to broadcast
+                                message_data = {
+                                    "event": "chat_message",
+                                    "room": room,
+                                    "data": {
+                                        "id": new_message.id,
+                                        "conversation_id": new_message.conversation_id,
+                                        "sender_id": new_message.sender_id,
+                                        "content": new_message.content,
+                                        "message_type": new_message.message_type,
+                                        "sent_at": new_message.sent_at.isoformat(),
+                                        "invoice_description": new_message.invoice_description,
+                                        "invoice_gift_price": new_message.invoice_gift_price,
+                                        "invoice_service_fee": new_message.invoice_service_fee,
+                                        "invoice_delivery_fee": new_message.invoice_delivery_fee,
+                                        "invoice_total": new_message.invoice_total
+                                    }
+                                }
+                                await manager.broadcast_to_room(message_data, room, user.id)
+                        except Exception as e:
+                            print(f"WebSocket: Error sending chat message: {e}")
 
     except WebSocketDisconnect:
-        print(f"WebSocket: Client disconnected from conversation {conversation_id}")
-        manager.disconnect(websocket, conversation_id)
+        print(f"WebSocket: Client disconnected for user {user.id if user else 'unknown'}")
+        if user:
+            manager.disconnect(user.id)
     except Exception as e:
         print(f"WebSocket error: {e}")
-        manager.disconnect(websocket, conversation_id)
+        if user:
+            manager.disconnect(user.id)
         try:
             await websocket.close(code=1011, reason="Internal server error")
         except:
@@ -296,4 +255,8 @@ async def websocket_chat(
     finally:
         # Always close the database session
         await db.close()
-        print(f"WebSocket: Database session closed for conversation {conversation_id}")
+        print(f"WebSocket: Database session closed")
+
+
+# Import event emission functions
+from websocket_events import emit_order_status_change, emit_chat_message

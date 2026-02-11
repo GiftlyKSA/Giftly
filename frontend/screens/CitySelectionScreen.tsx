@@ -125,6 +125,8 @@ export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData
         </ScrollView>
       )}
 
+
+
       <View style={styles.bottomContainer}>
         <Pressable
           disabled={!selected || loading}
@@ -135,7 +137,7 @@ export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData
           ]}
         >
           <Text style={styles.confirmText}>
-            {loading ? 'جاري الإنشاء...' : 'تأكيد والمتابعة للدردشة'}
+            تأكيد والمتابعة للدردشة
           </Text>
         </Pressable>
       </View>
@@ -282,5 +284,40 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  loadingCard: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  loadingTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  loadingSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
   },
 });

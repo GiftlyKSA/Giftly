@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -10,6 +10,7 @@ import uuid
 import os
 import tempfile
 import time
+from datetime import datetime
 from threading import Timer
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -65,7 +66,115 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
     await db.commit()
     await db.refresh(new_invoice)
 
+    # Update order status to indicate invoice is created
+    order.status = "invoice_created"  # You might want to add this status to your OrderStatus enum
+    await db.commit()
+
+    # Emit invoice creation event
+    from websocket_events import emit_invoice_created
+    await emit_invoice_created(new_invoice.id, new_invoice.order_id)
+
     return new_invoice
+
+@router.post("/courier/create", response_model=InvoiceResponse)
+async def create_invoice_by_courier(
+    invoice_data: CreateInvoice,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new invoice for an order by courier. Only assigned courier can create invoice.
+    """
+    if current_user.role != "Courier":
+        raise HTTPException(status_code=403, detail="Only couriers can create invoices")
+
+    # Check if order exists and is assigned to this courier
+    result = await db.execute(select(Order).where(Order.id == invoice_data.order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=400, detail="Order not found")
+
+    if order.assigned_to_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Order is not assigned to you")
+
+    # Check if invoice already exists for this order
+    result = await db.execute(select(Invoice).where(Invoice.order_id == invoice_data.order_id))
+    existing_invoice = result.scalar_one_or_none()
+    if existing_invoice:
+        raise HTTPException(status_code=400, detail="Invoice already exists for this order")
+
+    # Generate unique invoice ID
+    result = await db.execute(select(Invoice))
+    invoice_count = len(result.scalars().all())
+    invoice_id = f"INV-{invoice_count + 1:06d}"
+
+    # Store amounts as floats directly (no multiplication by 1000)
+    new_invoice = Invoice(
+        invoice_id=invoice_id,
+        order_id=invoice_data.order_id,
+        full_amount=invoice_data.full_amount,
+        service_fee=invoice_data.service_fee,
+        order_only_price=invoice_data.order_only_price,
+        courier_fee=invoice_data.courier_fee,
+        description=invoice_data.description,
+        comment=invoice_data.comment,
+        due_date=invoice_data.due_date,
+        tax_amount=invoice_data.tax_amount,
+        discount_amount=invoice_data.discount_amount,
+        status=InvoiceStatus.NEW,
+        created_by_user_id=current_user.id  # Track who created the invoice
+    )
+
+    db.add(new_invoice)
+    await db.commit()
+    await db.refresh(new_invoice)
+
+    return new_invoice
+
+@router.put("/courier/update/{invoice_id}", response_model=InvoiceResponse)
+async def update_invoice_by_courier(
+    invoice_id: str,
+    invoice_data: CreateInvoice,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update an existing invoice by courier. Only the assigned courier can update the invoice.
+    """
+    if current_user.role != "Courier":
+        raise HTTPException(status_code=403, detail="Only couriers can update invoices")
+
+    # Check if invoice exists
+    result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Check if order exists and is assigned to this courier
+    result = await db.execute(select(Order).where(Order.id == invoice.order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=400, detail="Order not found")
+
+    if order.assigned_to_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Order is not assigned to you")
+
+    # Store amounts as floats directly (no multiplication by 1000)
+    invoice.full_amount = invoice_data.full_amount
+    invoice.service_fee = invoice_data.service_fee
+    invoice.order_only_price = invoice_data.order_only_price
+    invoice.courier_fee = invoice_data.courier_fee
+    invoice.description = invoice_data.description
+    invoice.comment = invoice_data.comment
+    invoice.due_date = invoice_data.due_date
+    invoice.tax_amount = invoice_data.tax_amount
+    invoice.discount_amount = invoice_data.discount_amount
+    invoice.updated_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(invoice)
+
+    return invoice
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
 async def get_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)):
@@ -319,3 +428,77 @@ async def get_invoice_by_order(order_id: int, current_user = Depends(get_current
         raise HTTPException(status_code=404, detail="Invoice not found for this order")
 
     return invoice
+
+
+@router.post("/verify-coupon")
+async def verify_coupon(
+    coupon_code: str = Form(...),
+    invoice_id: int = Form(...),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Verify coupon code and calculate discount for an invoice.
+    """
+    # Get invoice and check ownership
+    result = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Check if invoice belongs to current user
+    result = await db.execute(select(Order).where(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Check if invoice is already paid
+    if invoice.status == "paid":
+        raise HTTPException(status_code=400, detail="Invoice is already paid")
+
+    # Find the coupon
+    result = await db.execute(select(Promocode).where(Promocode.code == coupon_code.upper()))
+    coupon = result.scalar_one_or_none()
+    if not coupon:
+        raise HTTPException(status_code=400, detail="Invalid coupon code")
+
+    # Check if coupon is active and not expired
+    if not coupon.active or coupon.valid_until < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Coupon is expired or inactive")
+
+    # Check usage limit
+    if coupon.usage_count >= coupon.usage_limit and coupon.usage_limit > 0:
+        raise HTTPException(status_code=400, detail="Coupon usage limit exceeded")
+
+    # Check minimum order value
+    if invoice.full_amount < coupon.minimum_order_value:
+        raise HTTPException(status_code=400, detail=f"Minimum order value for this coupon is {coupon.minimum_order_value}")
+
+    # Calculate discount
+    discount_amount = 0
+    if coupon.applicable_to == "order_total":
+        if coupon.percentage > 0:
+            discount_amount = invoice.full_amount * (coupon.percentage / 100)
+        if coupon.max_value > 0 and discount_amount > coupon.max_value:
+            discount_amount = coupon.max_value
+    elif coupon.applicable_to == "service_fee":
+        if coupon.percentage > 0:
+            discount_amount = invoice.service_fee * (coupon.percentage / 100)
+        if coupon.max_value > 0 and discount_amount > coupon.max_value:
+            discount_amount = coupon.max_value
+    elif coupon.applicable_to == "delivery_fee":
+        if coupon.percentage > 0:
+            discount_amount = invoice.courier_fee * (coupon.percentage / 100)
+        if coupon.max_value > 0 and discount_amount > coupon.max_value:
+            discount_amount = coupon.max_value
+
+    final_amount = invoice.full_amount - discount_amount
+    if final_amount < 0:
+        final_amount = 0
+
+    return {
+        "coupon_id": coupon.id,
+        "discount_amount": discount_amount,
+        "final_amount": final_amount,
+        "description": coupon.description or f"{coupon.percentage}% discount"
+    }

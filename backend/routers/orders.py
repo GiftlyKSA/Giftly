@@ -7,6 +7,7 @@ from models import Order, City, User, OrderStatus, Conversation, CourierBalanceA
 from datetime import datetime
 from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
 from auth import get_current_user
+from websocket_events import emit_order_status_change
 
 router = APIRouter()
 
@@ -41,7 +42,6 @@ async def create_order(order_data: CreateOrder, current_user: User = Depends(get
 
     db.add(new_order)
     await db.commit()
-    await db.refresh(new_order)
 
     # Create a conversation for this order
     new_conversation = Conversation(
@@ -55,7 +55,63 @@ async def create_order(order_data: CreateOrder, current_user: User = Depends(get
     await db.commit()
     await db.refresh(new_conversation)
 
-    return new_order
+    # Send initial message with order description (only if description exists)
+    if new_order.description and new_order.description.strip():
+        from websocket_events import emit_chat_message
+        from models import Message
+
+        initial_message_content = f"{new_order.description}"
+        initial_message = Message(
+            conversation_id=new_conversation.id,
+            sender_id=current_user.id,
+            content=initial_message_content,
+            message_type='text'
+        )
+        db.add(initial_message)
+        await db.commit()
+        await db.refresh(initial_message)
+
+        # Emit the initial message via WebSocket
+        await emit_chat_message(new_conversation.id, {
+            "id": initial_message.id,
+            "conversation_id": initial_message.conversation_id,
+            "sender_id": initial_message.sender_id,
+            "content": initial_message.content,
+            "message_type": initial_message.message_type,
+            "sent_at": initial_message.sent_at.isoformat()
+        }, db)
+
+    # Emit order creation event
+    await emit_order_status_change(new_order.id, new_order.status.value)
+
+    # Broadcast new order to couriers in the same city
+    from websocket_manager import manager
+    await manager.broadcast_to_room({
+        "event": "new_order",
+        "data": {
+            "order_id": new_order.order_id,
+            "id": new_order.id,
+            "description": new_order.description,
+            "city_id": new_order.city_id,
+            "delivery_date": new_order.delivery_date.isoformat() if new_order.delivery_date else None,
+            "created_by_user_id": new_order.created_by_user_id
+        }
+    }, f"couriers_city_{new_order.city_id}")
+
+    return {
+        "id": new_order.id,
+        "order_id": new_order.order_id,
+        "created_by_user_id": new_order.created_by_user_id,
+        "assigned_to_user_id": new_order.assigned_to_user_id,
+        "description": new_order.description,
+        "creation_date": new_order.creation_date,
+        "delivery_date": new_order.delivery_date,
+        "status": new_order.status,
+        "comments": new_order.comments,
+        "updated_at": new_order.updated_at,
+        "city_id": new_order.city_id,
+        "invoice": None  # New orders don't have invoices
+    }
 
 @router.get("/", response_model=list[OrderResponse])
 async def get_user_orders(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -72,7 +128,7 @@ async def get_order(order_id: str, current_user: User = Depends(get_current_user
     """
     Get a specific order by order_id. The user who created the order or the assigned courier can access it.
     """
-    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    result = await db.execute(select(Order).options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user)).where(Order.order_id == order_id))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -88,7 +144,7 @@ async def cancel_order(order_id: str, cancel_data: CancelOrderRequest, current_u
     """
     Cancel an order. Only the user who created the order can cancel it.
     """
-    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    result = await db.execute(select(Order).options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user)).where(Order.order_id == order_id))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -111,6 +167,9 @@ async def cancel_order(order_id: str, cancel_data: CancelOrderRequest, current_u
     await db.commit()
     await db.refresh(order)
 
+    # Emit order status change event
+    await emit_order_status_change(order.id, order.status.value)
+
     return order
 
 @router.put("/{order_id}/assign", response_model=OrderResponse)
@@ -121,7 +180,7 @@ async def assign_order(order_id: str, request: AssignOrderRequest, current_user:
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not authorized to assign orders")
 
-    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    result = await db.execute(select(Order).options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user)).where(Order.order_id == order_id))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -152,24 +211,32 @@ async def assign_order(order_id: str, request: AssignOrderRequest, current_user:
     await db.commit()
     await db.refresh(order)
 
+    # Emit order status change event
+    await emit_order_status_change(order.id, order.status.value)
+
     return order
 
 @router.get("/courier/available", response_model=list[OrderResponse])
 async def get_available_orders_for_courier(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get available orders for the courier in their city. Only couriers can access this.
+    Orders by latest created first (newest first).
     """
     if current_user.role != "Courier":
         raise HTTPException(status_code=403, detail="Only couriers can access available orders")
 
     # Get orders that are NEW and in the same city as the courier
+    # Order by creation_date descending (newest first)
+    print(f"Getting available orders for courier {current_user.id}, city {current_user.city_id}")
     result = await db.execute(
         select(Order).options(selectinload(Order.invoice)).where(
             Order.status == OrderStatus.NEW,
+            Order.assigned_to_user_id.is_(None),
             Order.city_id == current_user.city_id
-        )
+        ).order_by(Order.creation_date.desc())
     )
     orders = result.scalars().all()
+    print(f"Found {len(orders)} available orders: {[o.order_id for o in orders]}")
 
     return orders
 
@@ -181,7 +248,7 @@ async def accept_order(order_id: str, current_user: User = Depends(get_current_u
     if current_user.role != "Courier":
         raise HTTPException(status_code=403, detail="Only couriers can accept orders")
 
-    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    result = await db.execute(select(Order).options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user)).where(Order.order_id == order_id))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -203,10 +270,52 @@ async def accept_order(order_id: str, current_user: User = Depends(get_current_u
     # Update conversation with courier_id
     if order.conversation:
         order.conversation.courier_id = current_user.id
-        await db.commit()  # Commit conversation update immediately
 
     await db.commit()
     await db.refresh(order)
+
+    # Send welcome message from courier
+    from websocket_events import emit_chat_message
+    from models import Message
+
+    # Get customer name
+    customer_name = order.created_by_user.name if order.created_by_user else "عميلنا الكريم"
+    welcome_message_content = f"أهلاً وسهلاً {customer_name}\nاستلمت طلبك الآن وراح أبدأ بالتنسيق حسب التفاصيل."
+
+    welcome_message = Message(
+        conversation_id=order.conversation.id,
+        sender_id=current_user.id,
+        content=welcome_message_content,
+        message_type='text'
+    )
+    db.add(welcome_message)
+    await db.commit()
+    await db.refresh(welcome_message)
+
+    # Emit the welcome message via WebSocket
+    await emit_chat_message(order.conversation.id, {
+        "id": welcome_message.id,
+        "conversation_id": welcome_message.conversation_id,
+        "sender_id": welcome_message.sender_id,
+        "content": welcome_message.content,
+        "message_type": welcome_message.message_type,
+        "sent_at": welcome_message.sent_at.isoformat()
+    }, db)
+
+    # Emit order status change event
+    await emit_order_status_change(order.id, order.status.value)
+
+    # Also emit a specific event to notify customer that chat is now available
+    from websocket_manager import manager
+    await manager.send_to_user(order.created_by_user_id, {
+        "event": "chat_available",
+        "data": {
+            "order_id": order.order_id,
+            "conversation_id": order.conversation.id if order.conversation else None,
+            "courier_id": current_user.id,
+            "courier_name": current_user.name
+        }
+    })
 
     return order
 
@@ -214,16 +323,18 @@ async def accept_order(order_id: str, current_user: User = Depends(get_current_u
 async def get_courier_active_orders(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Get active orders assigned to the courier. Only couriers can access this.
+    Orders by latest created first (newest first).
     """
     if current_user.role != "Courier":
         raise HTTPException(status_code=403, detail="Only couriers can access their active orders")
 
     # Get orders assigned to this courier that are not cancelled or done
+    # Order by creation_date descending (newest first)
     result = await db.execute(
         select(Order).options(selectinload(Order.invoice)).where(
             Order.assigned_to_user_id == current_user.id,
             Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE])
-        )
+        ).order_by(Order.creation_date.desc())
     )
     orders = result.scalars().all()
 
@@ -351,6 +462,9 @@ async def complete_order(order_id: str, current_user: User = Depends(get_current
 
         await db.commit()
         await db.refresh(order)
+
+        # Emit order status change event
+        await emit_order_status_change(order.id, order.status.value)
 
         return order
 

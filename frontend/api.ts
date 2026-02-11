@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://971c-37-106-14-206.ngrok-free.app';
+export const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://306c-37-104-110-165.ngrok-free.app';
 
 export interface SendOTPRequest {
   phone_number: string;
@@ -20,6 +20,10 @@ export interface TokenResponse {
 }
 
 export const sendOTP = async (phoneNumber: string): Promise<{message: string, otp: string}> => {
+  console.log('API_BASE_URL:', API_BASE_URL);
+  console.log('Sending POST to:', `${API_BASE_URL}/auth/send-otp`);
+  console.log('Body:', JSON.stringify({ phone_number: phoneNumber }));
+
   const response = await fetch(`${API_BASE_URL}/auth/send-otp`, {
     method: 'POST',
     headers: {
@@ -28,18 +32,32 @@ export const sendOTP = async (phoneNumber: string): Promise<{message: string, ot
     body: JSON.stringify({ phone_number: phoneNumber }),
   });
 
+  console.log('Response status:', response.status);
+  console.log('Response ok:', response.ok);
+
+  const responseClone = response.clone();
+  const fullResponseText = await responseClone.text();
+  console.log('Full response body:', fullResponseText);
+
   if (!response.ok) {
     let errorMessage = 'Failed to send OTP';
     try {
-      const error = await response.json();
+      const responseText = await response.text();
+      console.log('Error response text:', responseText);
+      const error = JSON.parse(responseText);
+      console.log('Error response JSON:', error);
       errorMessage = error.detail || errorMessage;
     } catch (e) {
+      console.log('Error parsing response:', e);
       errorMessage = response.statusText || errorMessage;
     }
+    console.log('Throwing error:', errorMessage);
     throw new Error(errorMessage);
   }
 
-  return response.json();
+  const result = await response.json();
+  console.log('Success response:', result);
+  return result;
 };
 
 export interface CreateOrderRequest {
@@ -631,8 +649,8 @@ export interface WalletPaymentResponse {
   remaining_balance: number;
 }
 
-export const payWithWallet = async (token: string, invoiceId: number): Promise<WalletPaymentResponse> => {
-  const response = await fetch(`${API_BASE_URL}/payments/pay-with-wallet/${invoiceId}`, {
+export const payWithWallet = async (token: string, invoiceId: number, couponCode?: string): Promise<WalletPaymentResponse> => {
+  const response = await fetch(`${API_BASE_URL}/payments/pay-with-wallet/${invoiceId}?coupon_code=${couponCode || ''}`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -863,4 +881,143 @@ export const getCourierStats = async (token: string): Promise<CourierStatsRespon
   }
 
   return response.json();
+};
+
+export interface CreateInvoiceRequest {
+  order_id: number;
+  description?: string;
+  full_amount: number;
+  service_fee: number;
+  order_only_price: number;
+  courier_fee: number;
+  tax_amount?: number;
+  discount_amount?: number;
+  due_date?: string;
+  comment?: string;
+}
+
+export const createInvoice = async (token: string, invoiceData: CreateInvoiceRequest): Promise<InvoiceResponse> => {
+  console.log('createInvoice: Sending data:', invoiceData);
+
+  const response = await fetch(`${API_BASE_URL}/invoices/courier/create`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(invoiceData),
+  });
+
+  console.log('createInvoice: Response status:', response.status);
+  console.log('createInvoice: Response ok:', response.ok);
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to create invoice';
+    try {
+      const responseText = await response.text();
+      console.log('createInvoice: Error response text:', responseText);
+
+      const error = JSON.parse(responseText);
+      console.log('createInvoice: Parsed error:', error);
+
+      // Handle different error formats
+      if (error.detail) {
+        if (Array.isArray(error.detail)) {
+          // Handle array of errors
+          errorMessage = error.detail.map((err: any) => {
+            if (typeof err === 'string') return err;
+            if (err.msg) return err.msg;
+            if (err.message) return err.message;
+            return JSON.stringify(err);
+          }).join(', ');
+        } else if (typeof error.detail === 'string') {
+          errorMessage = error.detail;
+        } else if (typeof error.detail === 'object') {
+          // Handle object with field-specific errors
+          const fieldErrors = Object.entries(error.detail).map(([field, messages]) => {
+            if (Array.isArray(messages)) {
+              return `${field}: ${messages.join(', ')}`;
+            }
+            return `${field}: ${messages}`;
+          });
+          errorMessage = fieldErrors.join('; ');
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+    } catch (parseError) {
+      console.log('createInvoice: Error parsing response:', parseError);
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  const result = await response.json();
+  console.log('createInvoice: Success result:', result);
+  return result;
+};
+
+export const updateInvoice = async (token: string, invoiceId: string, invoiceData: CreateInvoiceRequest): Promise<InvoiceResponse> => {
+  console.log('updateInvoice: Sending data:', invoiceData);
+
+  const response = await fetch(`${API_BASE_URL}/invoices/courier/update/${invoiceId}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(invoiceData),
+  });
+
+  console.log('updateInvoice: Response status:', response.status);
+  console.log('updateInvoice: Response ok:', response.ok);
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to update invoice';
+    try {
+      const responseText = await response.text();
+      console.log('updateInvoice: Error response text:', responseText);
+
+      const error = JSON.parse(responseText);
+      console.log('updateInvoice: Parsed error:', error);
+
+      // Handle different error formats
+      if (error.detail) {
+        if (Array.isArray(error.detail)) {
+          // Handle array of errors
+          errorMessage = error.detail.map((err: any) => {
+            if (typeof err === 'string') return err;
+            if (err.msg) return err.msg;
+            if (err.message) return err.message;
+            return JSON.stringify(err);
+          }).join(', ');
+        } else if (typeof error.detail === 'string') {
+          errorMessage = error.detail;
+        } else if (typeof error.detail === 'object') {
+          // Handle object with field-specific errors
+          const fieldErrors = Object.entries(error.detail).map(([field, messages]) => {
+            if (Array.isArray(messages)) {
+              return `${field}: ${messages.join(', ')}`;
+            }
+            return `${field}: ${messages}`;
+          });
+          errorMessage = fieldErrors.join('; ');
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+    } catch (parseError) {
+      console.log('updateInvoice: Error parsing response:', parseError);
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  const result = await response.json();
+  console.log('updateInvoice: Success result:', result);
+  return result;
 };

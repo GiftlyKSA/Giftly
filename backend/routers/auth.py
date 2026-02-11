@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import User, City, Wallet
 from schemas import SendOTP, OTPVerify, Token, UpdateUserProfile, RefreshTokenRequest
-from auth import authenticate_user, create_access_token, create_refresh_token, create_jwt_tokens_async, revoke_user_tokens, generate_otp, get_user_by_phone, get_current_user, get_user_from_refresh_token
+from auth import authenticate_user, create_access_token, create_refresh_token, create_tokens, generate_otp, get_user_by_phone, get_current_user, validate_refresh_token
 from config import settings
 
 router = APIRouter()
@@ -62,7 +62,7 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
 
     if user.is_verified:
         # Existing user with complete profile, login
-        access_token, refresh_token = await create_jwt_tokens_async(db, user)
+        access_token, refresh_token = await create_tokens(db, user)
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
@@ -154,32 +154,15 @@ async def update_current_user(user_update: UpdateUserProfile, current_user: User
 
 @router.post("/refresh", response_model=Token)
 async def refresh_access_token(refresh_request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
-    # Use async refresh token validation
-    user = await get_user_from_refresh_token(refresh_request.refresh_token, db)
-
-    # INACTIVITY CHECK: If user hasn't been active for 15+ days, force re-login
-    if user.last_activity:
-        days_since_last_activity = (datetime.utcnow() - user.last_activity).days
-        if days_since_last_activity > 15:
-            # User inactive for more than 15 days - revoke all tokens and force re-login
-            await revoke_user_tokens(db, user.id)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session expired due to inactivity. Please log in again.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-    # SECURITY: Invalidate ALL existing tokens for this user when refreshing
-    # This prevents token reuse and forces logout on other devices
-    await revoke_user_tokens(db, user.id)
-
-    # Update user's last activity timestamp
-    user.last_activity = datetime.utcnow()
+    user_id, old_rt = await validate_refresh_token(db, refresh_request.refresh_token)
+    old_rt.revoked = True
     await db.commit()
-
-    # Create new tokens with fresh user data
-    access_token, refresh_token = await create_jwt_tokens_async(db, user)
-
+    from sqlalchemy import select
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    access_token, refresh_token = await create_tokens(db, user)
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 @router.post("/complete-profile", response_model=Token)
@@ -239,7 +222,7 @@ async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db
     await db.commit()
 
     # Create and store permanent tokens
-    access_token, refresh_token = await create_jwt_tokens_async(db, user)
+    access_token, refresh_token = await create_tokens(db, user)
 
     return {
         "access_token": access_token,
@@ -249,7 +232,9 @@ async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db
     }
 
 @router.post("/logout")
-async def logout(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Logout user by revoking all their tokens"""
-    await revoke_user_tokens(db, current_user.id)
+async def logout(refresh_request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    """Logout by revoking the provided refresh token"""
+    _, rt = await validate_refresh_token(db, refresh_request.refresh_token)
+    rt.revoked = True
+    await db.commit()
     return {"message": "Successfully logged out"}

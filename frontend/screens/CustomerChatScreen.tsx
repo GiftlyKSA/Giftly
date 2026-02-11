@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Message, ChatMessage } from '../types';
 import { useAuth } from '../App';
 import { cancelOrder, getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, getConversationByOrder, Conversation } from '../api';
+import { webSocketService } from '../WebSocketService';
 
 interface Props {
   onBack: () => void;
@@ -40,17 +41,12 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
-  const [wsConnected, setWsConnected] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const { token, user } = useAuth();
   const onChatStateChangeRef = useRef(onChatStateChange);
   const scrollViewRef = useRef<ScrollView>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
 
   // Update the ref whenever onChatStateChange changes
   useEffect(() => {
@@ -143,13 +139,29 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     }
   }, [order, conversation, loadingMessages, initialLoading]);
 
+  // Keyboard handling
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+
+    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
+  }, []);
+
 
 
   // Convert ChatMessage to Message for UI display
   const convertChatMessageToMessage = useCallback((chatMsg: ChatMessage, courierId?: number): Message => {
     const isCourier = courierId && chatMsg.sender_id === courierId;
     const date = new Date(chatMsg.sent_at);
-    const timeString = date.toLocaleTimeString('ar-SA', {
+    const timeString = date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: true
@@ -183,79 +195,80 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     }, 100);
   }, []);
 
-  // WebSocket connection management
-  const connectWebSocket = useCallback(() => {
-      if (!conversation || !token) return;
-
-  // prevent duplicate sockets
-  if (wsRef.current) return;
-
-  const apiBaseUrl = 'https://971c-37-106-14-206.ngrok-free.app';
-  const wsBaseUrl = apiBaseUrl
-    .replace(/^https:/, 'wss:')
-    .replace(/^http:/, 'ws:');
-
-  const wsUrl = `${wsBaseUrl}/ws/chat/${conversation.id}?token=${encodeURIComponent(token)}`;
-
-  console.log('🔌 Connecting WS:', wsUrl);
-
-  const ws = new WebSocket(wsUrl);
-  wsRef.current = ws;
-
-  ws.onopen = () => {
-    console.log('✅ WS connected');
-    setWsConnected(true);
-    setReconnecting(false);
-    reconnectAttemptsRef.current = 0;
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      const newMessage = convertChatMessageToMessage(data, order?.assigned_to_user_id);
-
-      setMessages(prev => {
-        if (prev.some(m => m.id === newMessage.id)) return prev;
-        return [...prev, newMessage];
-      });
-
-      scrollToBottom();
-    } catch (e) {
-      console.error('WS message error', e);
-    }
-  };
-
-  ws.onclose = (event) => {
-    console.log('🔌 WS closed', event.code);
-    wsRef.current = null;
-    setWsConnected(false);
-
-    if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
-      const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 30000);
-      reconnectAttemptsRef.current += 1;
-      setTimeout(connectWebSocket, delay);
-    }
-  };
-
-  ws.onerror = (e) => {
-    console.error('WS error', e);
-  };
-  }, [conversation?.id, token, convertChatMessageToMessage, scrollToBottom, order?.assigned_to_user_id]);
-
-  // Connect WebSocket when conversation is available
+  // WebSocket setup
   useEffect(() => {
-    if (conversation) {
-      connectWebSocket();
-    }
+    if (!conversation) return;
+
+    const room = `chat_${conversation.id}`;
+
+    // Join the chat room
+    webSocketService.joinRoom(room);
+
+    // Listen for chat messages
+    const handleChatMessage = (message: any) => {
+      if (message.room === room) {
+        const newMessage = convertChatMessageToMessage(message.data, order?.assigned_to_user_id);
+        setMessages(prev => {
+          if (prev.some(m => m.id === newMessage.id)) return prev;
+          return [...prev, newMessage];
+        });
+        scrollToBottom();
+      }
+    };
+
+    // Listen for chat available event
+    const handleChatAvailable = (message: any) => {
+      console.log('Chat available event received:', message);
+      if (message.data.order_id === order?.order_id) {
+        // Update order status to enable chat
+        setOrder(prev => prev ? { ...prev, status: 'received by courier', assigned_to_user_id: message.data.courier_id } : null);
+        // Refresh conversation to get updated courier info
+        fetchOrderDetails();
+      }
+    };
+
+    // Listen for order status changes
+    const handleOrderStatusChange = (message: any) => {
+      console.log('Order status change received in chat:', message);
+      if (message.data.id === order?.id) {
+        // Update order status
+        setOrder(prev => prev ? {
+          ...prev,
+          status: message.data.status,
+          assigned_to_user_id: message.data.assigned_to_user_id,
+          updated_at: message.data.updated_at
+        } : null);
+      }
+    };
+
+    // Listen for invoice creation events
+    const handleInvoiceCreated = (message: any) => {
+      console.log('Invoice created event received:', message);
+      if (message.data.order_id === order?.order_id) {
+        // Update order with invoice data
+        setOrder(prev => prev ? {
+          ...prev,
+          invoice: message.data.invoice,
+          status: message.data.status,
+          updated_at: message.data.updated_at
+        } : null);
+      }
+    };
+
+    webSocketService.onChatMessage(handleChatMessage);
+    webSocketService.on('chat_available', handleChatAvailable);
+    webSocketService.onOrderStatusChange(handleOrderStatusChange);
+    webSocketService.on('invoice_created', handleInvoiceCreated);
 
     // Cleanup function
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      webSocketService.leaveRoom(room);
+      webSocketService.off('chat_message', handleChatMessage);
+      webSocketService.off('chat_available', handleChatAvailable);
+      webSocketService.off('order_status_change', handleOrderStatusChange);
+      webSocketService.off('invoice_created', handleInvoiceCreated);
     };
-  }, [conversation, connectWebSocket]);
+  }, [conversation, convertChatMessageToMessage, scrollToBottom, order?.assigned_to_user_id, order?.order_id, fetchOrderDetails]);
 
   // Cleanup on unmount
 
@@ -342,31 +355,26 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     setInput(''); // Clear input immediately
 
     try {
-      // Send message via HTTP API
-      console.log('🌐 Calling sendMessage API...');
-      const sentMessage = await sendMessage(token, currentConversation.id, {
-        content: messageContent,
-        message_type: 'text'
-      });
-      console.log('✅ Message sent via API:', sentMessage.id);
+      // Send message via WebSocket
+      const room = `chat_${currentConversation.id}`;
+      console.log('🌐 Sending message via WebSocket to room:', room);
+      webSocketService.sendChatMessage(room, messageContent, 'text');
 
-      // Convert to UI message format
-      const uiMessage = convertChatMessageToMessage(sentMessage, order?.assigned_to_user_id);
-      console.log('🔄 Converted to UI message');
+      // Optimistic update - add message to UI immediately
+      const optimisticMessage: Message = {
+        id: `temp_${Date.now()}`,
+        text: messageContent,
+        sender: 'customer',
+        time: new Date().toLocaleTimeString('ar-SA', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+      };
 
-      // Add to messages (optimistic update - message should also come via WebSocket)
-      setMessages(prev => {
-        // Check if message already exists (from WebSocket)
-        if (prev.some(msg => msg.id === uiMessage.id.toString())) {
-          console.log('📨 Message already exists from WebSocket');
-          return prev;
-        }
-        console.log('📨 Adding message to UI');
-        return [...prev, uiMessage];
-      });
-
+      setMessages(prev => [...prev, optimisticMessage]);
       scrollToBottom();
-      console.log('✅ Message send process completed');
+      console.log('✅ Message sent via WebSocket');
     } catch (error: any) {
       console.error('❌ Error sending message:', error);
       // Revert input on error
@@ -437,17 +445,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
     }
   };
 
-  // Show loading screen until initial data is loaded
-  if (initialLoading) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.initialLoadingContainer}>
-          <ActivityIndicator size="large" color="#E0AAFF" />
-          <Text style={styles.initialLoadingText}>جاري تحميل المحادثة...</Text>
-        </View>
-      </View>
-    );
-  }
+  // No loading screen - show content immediately for better UX
 
   return (
     <View style={styles.container}>
@@ -466,8 +464,9 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
               <View style={styles.onlineIndicator} />
             </View>
             <View>
-              <Text style={styles.userName}>دعم العملاء</Text>
-              <Text style={styles.userStatus}>متصل الآن</Text>
+              <Text style={styles.userName}>
+                {order?.assigned_to_user?.name || 'المندوب'}
+              </Text>
             </View>
           </Pressable>
         </View>
@@ -510,7 +509,7 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
       </ScrollView>
 
       {/* Input Area */}
-      <View style={styles.inputArea}>
+      <View style={[styles.inputArea, { paddingBottom: Math.max(insets.bottom, 16) + keyboardHeight }]}>
         {order && order.invoice && onShowInvoice && (
           <Pressable onPress={() => {
             console.log(`you have clicked on invoice number ${order.invoice.invoice_id} for order id ${order.id}`);

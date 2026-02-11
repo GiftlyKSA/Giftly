@@ -15,6 +15,7 @@ import { CourierHomeScreen } from './screens/CourierHomeScreen';
 import { CourierLoginScreen } from './screens/CourierLoginScreen';
 import { InvoiceScreen } from './screens/InvoiceScreen';
 import { Message } from './types';
+import { webSocketService } from './WebSocketService';
 
 type Screen = 'welcome' | 'login' | 'profile' | 'home' | 'budget' | 'citySelection' | 'userProfile' | 'courierChat' | 'customerChat' | 'searchingExpert' | 'courierLogin' | 'courierHome' | 'invoice';
 
@@ -67,6 +68,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   };
 
   const logout = () => {
+    webSocketService.disconnect();
     setToken(null);
     setPhone(null);
     setUserData(null);
@@ -84,6 +86,30 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       console.error('Failed to fetch user data:', error);
     }
   };
+
+  // Connect to WebSocket when token is available
+  useEffect(() => {
+    if (token) {
+      webSocketService.connect(token);
+    } else {
+      webSocketService.disconnect();
+    }
+
+    return () => {
+      webSocketService.disconnect();
+    };
+  }, [token]);
+
+  // Join appropriate room when user data is available
+  useEffect(() => {
+    if (token && userData) {
+      if (userData.role === 'Courier') {
+        webSocketService.joinRoom('couriers');
+      } else {
+        webSocketService.joinRoom(`user_${userData.id}`);
+      }
+    }
+  }, [token, userData]);
 
   return (
     <AuthContext.Provider value={{ token, phone, userData, login, logout, fetchUserData }}>
@@ -119,6 +145,50 @@ const AppContent: React.FC = () => {
   const [selectedCourierOrderId, setSelectedCourierOrderId] = useState<string | null>(null);
   const [ordersData, setOrdersData] = useState<any[]>([]);
   const { login, token, userData } = useAuth();
+
+  // Handle WebSocket events
+  useEffect(() => {
+    const handleOrderStatusChange = (message: any) => {
+      console.log('Order status change:', message);
+      // Update orders data if this order is in the list
+      setOrdersData(prevOrders =>
+        prevOrders.map(order =>
+          order.id === message.data.order_id
+            ? { ...order, status: message.data.status, updated_at: message.data.updated_at }
+            : order
+        )
+      );
+    };
+
+    const handleChatMessage = (message: any) => {
+      console.log('Chat message received:', message);
+      const room = message.room;
+      const chatData = message.data;
+
+      // Update chat states if we're in the relevant chat
+      if (room.startsWith('chat_')) {
+        const conversationId = room.split('_')[1];
+        // Find which order this conversation belongs to and update the chat state
+        // This would require mapping conversation IDs to order IDs, which might need additional API calls
+        // For now, we'll just log it and let the chat screens handle real-time updates
+      }
+    };
+
+    const handleNewOrder = (message: any) => {
+      console.log('New order received:', message);
+      // Couriers will receive new orders in real-time
+      // The CourierHomeScreen should refresh its available orders
+    };
+
+    webSocketService.onOrderStatusChange(handleOrderStatusChange);
+    webSocketService.onChatMessage(handleChatMessage);
+    webSocketService.on('new_order', handleNewOrder);
+
+    return () => {
+      webSocketService.off('order_status_change', handleOrderStatusChange);
+      webSocketService.off('chat_message', handleChatMessage);
+    };
+  }, []);
 
 
 
@@ -321,6 +391,10 @@ const AppContent: React.FC = () => {
             console.log('App.tsx: SearchingExpertScreen onNavigateToChat called with orderId =', orderId);
             setSelectedOrderId(orderId);
             setCurrentScreen('customerChat');
+          }}
+          onBack={() => {
+            setInitialHomeTab('home');
+            setCurrentScreen('home');
           }}
         />;
       case 'courierLogin':

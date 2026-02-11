@@ -83,7 +83,7 @@ def send_courier_message():
 
 def send_to_conversation(conversation, token):
     random_message = random.choice(messages)
-    ws_url = f"wss://971c-37-106-14-206.ngrok-free.app/ws/chat/{conversation.id}?token={token}"
+    ws_url = f"wss://https://306c-37-104-110-165.ngrok-free.app/ws/chat/{conversation.id}?token={token}"
 
     def on_message(ws, message):
         print(f"Received: {message}")

@@ -182,15 +182,25 @@ class CityResponse(BaseModel):
 
 class CreateInvoice(BaseModel):
     order_id: int
-    full_amount: int
-    service_fee: Optional[int] = 0
-    order_only_price: int
-    courier_fee: Optional[int] = 0
+    full_amount: float
+    service_fee: Optional[float] = 0.0
+    order_only_price: float
+    courier_fee: Optional[float] = 0.0
     description: Optional[str] = None
     comment: Optional[str] = None
     due_date: Optional[datetime] = None
-    tax_amount: Optional[int] = 0
-    discount_amount: Optional[int] = 0
+    tax_amount: Optional[float] = 0.0
+    discount_amount: Optional[float] = 0.0
+
+    @validator('full_amount', 'service_fee', 'order_only_price', 'courier_fee', 'tax_amount', 'discount_amount')
+    def validate_amount(cls, v):
+        if v is not None:
+            if v < 0:
+                raise ValueError('Amount cannot be negative')
+            # Check for at most 3 decimal places
+            if round(v, 3) != v:
+                raise ValueError('Amount must have at most 3 decimal places')
+        return v
 
 class CancelOrderRequest(BaseModel):
     reason: str

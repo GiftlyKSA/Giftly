@@ -5,6 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../App';
 import { getUserOrders, cancelOrder, OrderResponse } from '../api';
+import { webSocketService } from '../WebSocketService';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -40,6 +41,33 @@ export const HomeScreen: React.FC<Props> = ({ onNavigateProfile, onNavigateCouri
       fetchOrders();
     }
   }, [token, activeTab, ordersData]);
+
+  // Listen for real-time order updates
+  useEffect(() => {
+    const handleOrderStatusChange = (message: any) => {
+      console.log('Order status change received:', message);
+      if (onOrdersDataChange && ordersData) {
+        const updatedOrders = ordersData.map(order => {
+          if (order.id === message.data.id) {
+            return {
+              ...order,
+              status: message.data.status,
+              updated_at: message.data.updated_at,
+              assigned_to_user_id: message.data.assigned_to_user_id
+            };
+          }
+          return order;
+        });
+        onOrdersDataChange(updatedOrders);
+      }
+    };
+
+    webSocketService.onOrderStatusChange(handleOrderStatusChange);
+
+    return () => {
+      webSocketService.off('order_status_change', handleOrderStatusChange);
+    };
+  }, [ordersData, onOrdersDataChange]);
 
   const fetchOrders = async () => {
     if (!token) return;

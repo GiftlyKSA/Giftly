@@ -36,9 +36,9 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
     return () => clearInterval(interval);
   }, [step, timer]);
 
-  const handleOtpChange = (value: string, index: number) => {
+  const handleOtpChange = (value: string | undefined, index: number) => {
     // Only allow numeric digits
-    const numericValue = value.replace(/[^0-9]/g, '');
+    const numericValue = (value || '').replace(/[^0-9]/g, '');
     if (numericValue.length > 1) return; // Only allow single digit
 
     const newOtp = [...otp];
@@ -76,7 +76,7 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
       return 'رقم الجوال مطلوب';
     }
 
-    const clean = ph.replace(/[^0-9]/g, '');
+    const clean = (ph || '').replace(/[^0-9]/g, '');
 
     if (clean.startsWith('05')) {
       if (clean.length !== 10) {
@@ -159,6 +159,7 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
           ) : null}
 
             <Pressable onPress={async () => {
+              console.log('Sending OTP for phone:', phone);
               // Validate phone number
               const validationError = validatePhone(phone);
               if (validationError) {
@@ -167,14 +168,18 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
               }
 
               try {
+                console.log('Calling sendOTP API...');
                 const response = await sendOTP(phone);
+                console.log('OTP sent successfully:', response);
                 setSentOtp(response.otp);
+                console.log('Setting step to OTP');
                 setStep('OTP');
                 setTimer(90);
                 setCanResend(false);
                 setError('');
                 setPhoneError(''); // Clear any previous phone errors
               } catch (error: any) {
+                console.log('Failed to send OTP:', error);
                 setError(error.message || 'Failed to send OTP');
               }
             }} style={styles.primaryButton}>

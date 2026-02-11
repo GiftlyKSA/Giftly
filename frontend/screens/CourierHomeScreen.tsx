@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../App';
 import { getAvailableOrdersForCourier, acceptOrder, getCourierActiveOrders, getCourierAllOrders, getWallet, requestWalletDeposit, updateUserDetails, OrderResponse, WalletResponse, getCourierStats, CourierStatsResponse } from '../api';
+import { webSocketService } from '../WebSocketService';
 
 interface Props {
   onLogout: () => void;
@@ -64,6 +65,7 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
   const [wallet, setWallet] = useState<WalletResponse | null>(null);
   const [courierStats, setCourierStats] = useState<CourierStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [acceptingOrders, setAcceptingOrders] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
 
@@ -73,6 +75,84 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
       loadData();
     }
   }, [activeTab, token]);
+
+  // Listen for real-time order updates
+  useEffect(() => {
+    const handleOrderStatusChange = (message: any) => {
+      console.log('Courier order status change received:', message);
+      const orderId = message.data.order_id;
+      const newStatus = message.data.status;
+
+      // Update available orders - remove if status changed from 'new'
+      if (newStatus !== 'new') {
+        setAvailableOrders(prev => prev.filter(order => order.id !== orderId));
+      }
+
+      // Update active orders
+      setActiveOrders(prev => {
+        const existingOrder = prev.find(order => order.id === orderId);
+        if (existingOrder) {
+          // Update existing order status
+          return prev.map(order =>
+            order.id === orderId
+              ? { ...order, status: newStatus, updated_at: message.data.updated_at }
+              : order
+          );
+        } else if (newStatus === 'received by courier' || newStatus === 'in progress to do' || newStatus === 'in progress to deliver') {
+          // This might be a new active order for this courier - we could fetch it, but for now just log
+          console.log('New active order detected, might need to refresh data');
+          return prev;
+        }
+        return prev;
+      });
+
+      // Update stats if needed
+      if (courierStats) {
+        // Recalculate active orders count
+        const updatedActiveOrders = activeOrders.filter(order =>
+          !['cancelled', 'done'].includes(order.status)
+        );
+        if (updatedActiveOrders.length !== courierStats.active_orders_count) {
+          setCourierStats(prev => prev ? { ...prev, active_orders_count: updatedActiveOrders.length } : null);
+        }
+      }
+    };
+
+    const handleNewOrder = (message: any) => {
+      console.log('Courier new order received:', message);
+      const newOrder = message.data;
+
+      // Add to available orders at the TOP if not already present
+      setAvailableOrders(prev => {
+        const exists = prev.some(order => order.id === newOrder.id);
+        if (!exists) {
+          return [{
+            id: newOrder.id,
+            order_id: newOrder.order_id,
+            description: newOrder.description,
+            city_id: newOrder.city_id,
+            delivery_date: newOrder.delivery_date,
+            status: 'new',
+            created_by_user_id: newOrder.created_by_user_id,
+            assigned_to_user_id: null,
+            creation_date: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            comments: null,
+            invoice: null
+          }, ...prev]; // Prepend to top instead of append to bottom
+        }
+        return prev;
+      });
+    };
+
+    webSocketService.onOrderStatusChange(handleOrderStatusChange);
+    webSocketService.on('new_order', handleNewOrder);
+
+    return () => {
+      webSocketService.off('order_status_change', handleOrderStatusChange);
+      webSocketService.off('new_order', handleNewOrder);
+    };
+  }, [activeOrders, courierStats]);
 
   const loadData = async () => {
     if (!token) {
@@ -125,23 +205,33 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
   };
 
   const handleAcceptOrder = async (orderId: string) => {
+    if (acceptingOrders.has(orderId)) return;
+
+    setAcceptingOrders(prev => new Set(prev).add(orderId));
+
     try {
-      setLoading(true);
       if (!token) return;
 
       await acceptOrder(token, orderId);
-      Alert.alert('نجح', 'تم قبول الطلب بنجاح');
 
-      // Switch to active orders tab to show the newly accepted order
-      setActiveTab('active');
-
-      // Refresh data for the active tab
-      loadData();
+      // Navigate to chat screen for the accepted order immediately
+      if (onNavigateToChat) {
+        onNavigateToChat(orderId);
+      } else {
+        // Fallback: Switch to active orders tab to show the newly accepted order
+        setActiveTab('active');
+        // Refresh data for the active tab
+        loadData();
+      }
     } catch (error) {
       console.error('Error accepting order:', error);
       Alert.alert('خطأ', 'فشل في قبول الطلب');
     } finally {
-      setLoading(false);
+      setAcceptingOrders(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(orderId);
+        return newSet;
+      });
     }
   };
 
@@ -237,7 +327,7 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
               <View style={styles.statCard}>
                 <Text style={styles.statLabel}>أرباح اليوم</Text>
                 <Text style={styles.statValue}>
-                  {courierStats ? (courierStats.todays_earnings / 100).toFixed(2) : '0.00'} <Text style={styles.currency}>ر.س</Text>
+                  {courierStats ? courierStats.todays_earnings.toFixed(2) : '0.00'} <Text style={styles.currency}>ر.س</Text>
                 </Text>
               </View>
               <View style={styles.statCard}>
@@ -275,19 +365,28 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
                             <Feather name="package" size={24} color="#E0AAFF" />
                           </View>
                           <View>
-                            <Text style={styles.orderTitle}>طلب {order.order_id}</Text>
-                            <Text style={styles.orderSubtitle}>{order.description || 'وصف غير محدد'}</Text>
+                          <Text style={styles.orderTitle}>طلب {order.order_id}</Text>
+                          <Text style={styles.orderSubtitle}>
+                            {order.description ? (order.description.length > 100 ? `${order.description.substring(0, 100)}...` : order.description) : 'وصف غير محدد'}
+                          </Text>
+                          <Text style={styles.orderDeliveryDate}>
+                            تاريخ التوصيل: {order.delivery_date ? new Date(order.delivery_date).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric'
+                            }) : 'غير محدد'}
+                          </Text>
                           </View>
                         </View>
-                        <Text style={styles.orderPrice}>
-                          {order.invoice ? `${(order.invoice.full_amount / 100).toFixed(2)} ر.س` : 'غير محدد'}
+                        <Text style={[styles.orderPrice, !order.invoice && styles.orderPriceUndefined]}>
+                          {order.invoice ? `${order.invoice.full_amount.toFixed(2)} ر.س` : 'غير محدد'}
                         </Text>
                       </View>
                       <View style={styles.orderFooter}>
                         <Pressable
                           onPress={() => handleAcceptOrder(order.order_id)}
-                          disabled={loading}
-                          style={[styles.acceptButton, loading && { opacity: 0.6 }]}
+                          disabled={acceptingOrders.has(order.order_id)}
+                          style={[styles.acceptButton, acceptingOrders.has(order.order_id) && { opacity: 0.6 }]}
                         >
                           <Text style={styles.acceptButtonText}>
                             {loading ? 'جاري المعالجة...' : 'قبول الطلب'}
@@ -434,7 +533,7 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
               <View style={styles.walletContent}>
                 <Text style={styles.walletLabel}>الرصيد المتاح</Text>
                 <Text style={styles.walletAmount}>
-                  {wallet ? (wallet.balance / 100).toFixed(2) : '0.00'} <Text style={styles.walletCurrency}>ر.س</Text>
+                  {wallet ? wallet.balance.toFixed(2) : '0.00'} <Text style={styles.walletCurrency}>ر.س</Text>
                 </Text>
               </View>
             </View>
@@ -493,12 +592,12 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
                         </View>
                       </View>
                       <Text style={styles.previousOrderPrice}>
-                        {order.invoice ? `${(order.invoice.full_amount / 100).toFixed(2)} ر.س` : 'غير محدد'}
+                        {order.invoice ? `${order.invoice.full_amount.toFixed(2)} ر.س` : 'غير محدد'}
                       </Text>
                     </View>
                     <View style={styles.previousOrderFooter}>
                       <Text style={styles.previousOrderDate}>
-                        {new Date(order.created_at).toLocaleDateString('ar-SA')}
+                        {new Date(order.created_at).toLocaleDateString('en-US')}
                       </Text>
                     </View>
                   </View>
@@ -814,10 +913,20 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 4,
   },
+  orderDeliveryDate: {
+    fontSize: 10,
+    color: '#6B7280',
+    fontWeight: '600',
+    marginTop: 2,
+  },
   orderPrice: {
     fontSize: 14,
     fontWeight: '900',
     color: '#E0AAFF',
+  },
+  orderPriceUndefined: {
+    color: '#9CA3AF',
+    fontWeight: '500',
   },
   orderFooter: {
     flexDirection: 'row',

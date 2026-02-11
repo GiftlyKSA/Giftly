@@ -84,8 +84,8 @@ class User(Base):
     last_activity = Column(DateTime, nullable=True)  # Track last user activity for session management
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
 
-    # Relationship to JWT tokens
-    jwt_tokens = relationship("JWTToken", back_populates="user", cascade="all, delete-orphan")
+    # Relationship to refresh tokens
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     # Relationship to city
     city = relationship("City", back_populates="users")
     # Relationship to orders created by user
@@ -133,7 +133,7 @@ class Order(Base):
     assigned_to_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     description = Column(Text, nullable=True)
     creation_date = Column(DateTime, default=func.now(), nullable=False)
-    delivery_date = Column(DateTime, nullable=True)
+    delivery_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.NEW)
     comments = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -144,7 +144,7 @@ class Order(Base):
     assigned_to_user = relationship("User", back_populates="assigned_orders", foreign_keys=[assigned_to_user_id])
     city = relationship("City", back_populates="orders")
     # Relationship to invoice
-    invoice = relationship("Invoice", back_populates="order", uselist=False)
+    invoice = relationship("Invoice", back_populates="order", uselist=False, lazy='selectin')
     # Relationship to conversation
     conversation = relationship("Conversation", back_populates="order", uselist=False)
 
@@ -195,24 +195,22 @@ class Invoice(Base):
         Index('idx_invoice_paid', 'status', 'sent_to_user_via_email'),
     )
 
-class JWTToken(Base):
-    __tablename__ = "jwt_tokens"
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    access_token = Column(String, unique=True, nullable=False, index=True)
-    refresh_token = Column(String, unique=True, nullable=False, index=True)
-    access_token_expires_at = Column(DateTime, nullable=False)
-    refresh_token_expires_at = Column(DateTime, nullable=False)
-    is_revoked = Column(Boolean, default=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    revoked = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
 
     # Relationship back to user
-    user = relationship("User", back_populates="jwt_tokens")
+    user = relationship("User", back_populates="refresh_tokens")
 
     __table_args__ = (
-        Index('idx_jwt_user', 'user_id', 'is_revoked', 'access_token_expires_at'),
-        Index('idx_jwt_expiry', 'access_token_expires_at', postgresql_where=Column('is_revoked') == False),
+        Index('idx_refresh_user', 'user_id', 'revoked', 'expires_at'),
+        Index('idx_refresh_expiry', 'expires_at', postgresql_where=Column('revoked') == False),
     )
 
 class Conversation(Base):
