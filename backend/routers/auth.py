@@ -175,14 +175,10 @@ async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db
     date_of_birth_str = profile_data.get("date_of_birth")
     national_id = profile_data.get("national_id")
     passport_id = profile_data.get("passport_id")
-    role = profile_data.get("role", "Customer")
+    role = "Customer"
 
     if not all([phone_number, name, email, date_of_birth_str]):
         raise HTTPException(status_code=400, detail="Name, email, and date of birth are required")
-
-    # For couriers, require either national_id or passport_id
-    if role == "Courier" and not (national_id or passport_id):
-        raise HTTPException(status_code=400, detail="Couriers must provide either national ID or passport ID")
 
     from datetime import datetime
     try:
