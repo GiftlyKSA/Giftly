@@ -26,6 +26,7 @@ export const CompleteProfileScreen: React.FC<Props> = ({ phone, otp, onNext }) =
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [birthDate, setBirthDate] = useState<Date | null>(null);
+  const [role, setRole] = useState<'Customer' | 'Courier'>('Customer');
 
   const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -82,7 +83,7 @@ export const CompleteProfileScreen: React.FC<Props> = ({ phone, otp, onNext }) =
         name: name.trim(),
         email: email.trim(),
         date_of_birth: birthDate!.toISOString().split('T')[0],
-        role: 'Customer',
+        role: role,
       });
 
       onNext(response.access_token);
@@ -238,7 +239,28 @@ export const CompleteProfileScreen: React.FC<Props> = ({ phone, otp, onNext }) =
   </View>
 </Modal>
 
-
+      {/* Role Selection */}
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>نوع الحساب</Text>
+        <View style={styles.roleContainer}>
+          <Pressable
+            style={[styles.roleButton, role === 'Customer' && styles.roleButtonActive]}
+            onPress={() => setRole('Customer')}
+          >
+            <Text style={[styles.roleButtonText, role === 'Customer' && styles.roleButtonTextActive]}>
+              عميل
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.roleButton, role === 'Courier' && styles.roleButtonActive]}
+            onPress={() => setRole('Courier')}
+          >
+            <Text style={[styles.roleButtonText, role === 'Courier' && styles.roleButtonTextActive]}>
+              مندوب
+            </Text>
+          </Pressable>
+        </View>
+      </View>
 
 
 
@@ -334,5 +356,31 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     padding: 8,
+  },
+  roleContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  roleButton: {
+    flex: 1,
+    height: 52,
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roleButtonActive: {
+    backgroundColor: '#E0AAFF',
+    borderColor: '#E0AAFF',
+  },
+  roleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  roleButtonTextActive: {
+    color: '#FFF',
   },
 });

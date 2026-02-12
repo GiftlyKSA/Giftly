@@ -411,9 +411,7 @@ export interface CompleteProfileRequest {
   name: string;
   email: string;
   date_of_birth: string;
-  role?: string;
-  national_id?: string;
-  passport_id?: string;
+  role: string;
 }
 
 export const completeProfile = async (data: CompleteProfileRequest): Promise<TokenResponse> => {
