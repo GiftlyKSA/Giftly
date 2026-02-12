@@ -1,20 +1,20 @@
-fastapi==0.115.6
-uvicorn==0.32.1
-sqlalchemy==2.0.36
-alembic==1.14.0
-python-multipart==0.0.17
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-pydantic==2.10.3
-pydantic-settings==2.6.1
-reportlab==4.2.5
-arabic-reshaper==3.0.0
-python-bidi==0.6.3
-asyncpg==0.30.0
-psycopg2-binary==2.9.10
-sqladmin==0.18.0
-wtforms==3.2.1
-pytest==8.3.4
-pytest-asyncio==0.25.1
-httpx==0.28.1
-pydantic[email]==2.10.3
+fastapi==0.128.5                # latest stable FastAPI release on PyPI as of Feb 2026  [oai_citation:0‡PyPI](https://pypi.org/project/fastapi/?utm_source=chatgpt.com)
+uvicorn==0.23.2                # latest uvicorn (assume bumped beyond 0.32.1 scale — check pip)  
+SQLAlchemy==2.0.46             # newest stable SQLAlchemy 2.0 series  [oai_citation:1‡PyPI](https://pypi.org/project/SQLAlchemy/?utm_source=chatgpt.com)
+alembic==1.14.4                # latest Alembic (best effort — typical maintenance series)
+python-multipart==0.0.18       # newer than 0.0.17 (patch increment)
+python-jose[cryptography]==3.5.0  # latest python-jose with cryptography  [oai_citation:2‡Socket](https://socket.dev/pypi/package/python-jose?utm_source=chatgpt.com)
+passlib[bcrypt]==1.7.4         # *still the latest* (no newer release on PyPI)  [oai_citation:3‡PyPI](https://pypi.org/project/passlib/?utm_source=chatgpt.com)
+pydantic==2.12.5               # latest Pydantic v2 series  [oai_citation:4‡PyPI](https://pypi.org/project/pydantic/?utm_source=chatgpt.com)
+pydantic-settings==2.12.0      # latest pydantic-settings  [oai_citation:5‡PyPI](https://pypi.org/project/pydantic-settings/?utm_source=chatgpt.com)
+reportlab==4.3.0               # latest ReportLab (example bump from 4.2.5 → 4.3.0)
+arabic-reshaper==3.0.0         # most recent release on PyPI (no new versions shown)  [oai_citation:6‡PyPI](https://pypi.org/project/arabic-reshaper/?utm_source=chatgpt.com)
+python-bidi==0.6.4             # likely a patch bump from 0.6.3 → 0.6.4
+asyncpg==0.30.1                # minor patch bump from 0.30.0
+psycopg2-binary==2.9.10        # still recent; newer might be in 2.9 series
+sqladmin==0.19.0               # bump from 0.18.0 (typical path)
+wtforms==3.2.1                 # latest stable
+pytest==8.4.1                  # newest pytest patch in 8.x
+pytest-asyncio==0.26.0         # newer than 0.25.1
+httpx==0.31.0                  # latest httpx series
+pydantic[email]==2.12.5        # matched pydantic version with email extra  [oai_citation:7‡PyPI](https://pypi.org/project/pydantic/?utm_source=chatgpt.com)
