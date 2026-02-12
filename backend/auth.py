@@ -66,7 +66,8 @@ async def create_tokens(db: AsyncSession, user: User) -> Tuple[str, str]:
         "type": "refresh"
     }
     refresh_token = create_refresh_token(refresh_payload, refresh_delta)
-    token_hash = pwd_context.hash(refresh_token)
+    # Truncate refresh token to 72 bytes for bcrypt compatibility
+    token_hash = pwd_context.hash(refresh_token[:72])
     refresh_db = RefreshToken(
         user_id=user.id,
         token_hash=token_hash,
@@ -141,7 +142,8 @@ async def validate_refresh_token(db: AsyncSession, token: str) -> Tuple[int, Ref
     )
     tokens = result.scalars().all()
     for rt in tokens:
-        if pwd_context.verify(token, rt.token_hash):
+        # Verify against truncated token (first 72 bytes)
+        if pwd_context.verify(token[:72], rt.token_hash):
             return user_id, rt
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

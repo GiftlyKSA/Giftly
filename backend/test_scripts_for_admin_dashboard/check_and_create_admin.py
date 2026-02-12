@@ -29,7 +29,7 @@ async def check_and_create_admin():
             # Create admin user
             hashed_password = get_password_hash(password)
             admin_user = User(
-                phone_number="admin_admin",  # dummy phone number
+                phone_number="559644339",  # dummy phone number
                 name="Administrator",
                 is_admin=True,
                 role='Admin',
