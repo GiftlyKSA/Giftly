@@ -34,28 +34,7 @@ async def authenticate_admin(credentials: HTTPBasicCredentials = Depends(securit
         )
     return user
 
-@router.post("/create-admin")
-async def create_admin_user(username: str = Form(...), password: str = Form(...), db: AsyncSession = Depends(get_db)):
-    # Check if admin already exists
-    result = await db.execute(select(User).where(User.admin_username == username))
-    existing_admin = result.scalar_one_or_none()
-    if existing_admin:
-        raise HTTPException(status_code=400, detail="Admin user already exists")
 
-    # Create admin user
-    hashed_password = get_password_hash(password)
-    admin_user = User(
-        phone_number=f"admin_{username}",  # dummy phone number
-        name=f"Admin {username}",
-        is_admin=True,
-        admin_username=username,
-        admin_password_hash=hashed_password,
-        is_verified=True
-    )
-    db.add(admin_user)
-    await db.commit()
-    await db.refresh(admin_user)
-    return {"message": "Admin user created successfully"}
 
 @router.get("/me")
 async def get_admin_info(current_admin: User = Depends(authenticate_admin)):
