@@ -41,6 +41,7 @@ interface AuthContextType {
   login: (token: string, phone: string) => Promise<UserData | null>;
   logout: () => void;
   fetchUserData: () => Promise<void>;
+  updateToken: (newToken: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -67,6 +68,10 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     return userData;
   };
 
+  const updateToken = (newToken: string) => {
+    setToken(newToken);
+  };
+
   const logout = () => {
     webSocketService.disconnect();
     setToken(null);
@@ -86,6 +91,12 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       console.error('Failed to fetch user data:', error);
     }
   };
+
+  // Set token update callback for API refresh
+  useEffect(() => {
+    const { setTokenUpdateCallback } = require('./api');
+    setTokenUpdateCallback(updateToken);
+  }, []);
 
   // Connect to WebSocket when token is available
   useEffect(() => {
@@ -112,7 +123,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   }, [token, userData]);
 
   return (
-    <AuthContext.Provider value={{ token, phone, userData, login, logout, fetchUserData }}>
+    <AuthContext.Provider value={{ token, phone, userData, login, logout, fetchUserData, updateToken }}>
       {children}
     </AuthContext.Provider>
   );
@@ -260,8 +271,13 @@ const AppContent: React.FC = () => {
             setAuthData({ phone: result.phone, otp: result.otp });
             setCurrentScreen('profile');
           } else if (result.token) {
-            // Fetch user data and navigate based on role
+            // Save refresh token and fetch user data
             try {
+              if (result.refreshToken) {
+                const { saveRefreshToken } = await import('./auth');
+                await saveRefreshToken(result.refreshToken);
+              }
+
               const { getUserDetails } = await import('./api');
               const userData = await getUserDetails(result.token);
               await login(result.token, result.phone);
@@ -282,9 +298,12 @@ const AppContent: React.FC = () => {
         return <CompleteProfileScreen
           phone={authData?.phone || ''}
           otp={authData?.otp || ''}
-          onNext={async (token) => {
-            // Fetch user data and navigate based on role
+          onNext={async (token, refreshToken) => {
+            // Save refresh token and fetch user data
             try {
+              const { saveRefreshToken } = await import('./auth');
+              await saveRefreshToken(refreshToken);
+
               const { getUserDetails } = await import('./api');
               const userData = await getUserDetails(token);
               await login(token, authData?.phone || '');

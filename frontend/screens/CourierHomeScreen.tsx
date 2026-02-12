@@ -145,12 +145,32 @@ export const CourierHomeScreen: React.FC<Props> = ({ onLogout, onAcceptOrder, on
       });
     };
 
+    const handleInvoiceCreated = (message: any) => {
+      console.log('Courier invoice created event received:', message);
+      const orderId = message.data.order_id;
+
+      // Update active orders with invoice data
+      setActiveOrders(prev => prev.map(order => {
+        if (order.id === orderId) {
+          return {
+            ...order,
+            invoice: message.data.invoice,
+            status: message.data.status,
+            updated_at: message.data.updated_at
+          };
+        }
+        return order;
+      }));
+    };
+
     webSocketService.onOrderStatusChange(handleOrderStatusChange);
     webSocketService.on('new_order', handleNewOrder);
+    webSocketService.onInvoiceCreated(handleInvoiceCreated);
 
     return () => {
       webSocketService.off('order_status_change', handleOrderStatusChange);
       webSocketService.off('new_order', handleNewOrder);
+      webSocketService.off('invoice_created', handleInvoiceCreated);
     };
   }, [activeOrders, courierStats]);
 

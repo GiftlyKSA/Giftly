@@ -187,6 +187,10 @@ class WebSocketService {
   onChatMessage(callback: (data: any) => void) {
     this.on('chat_message', callback);
   }
+
+  onInvoiceCreated(callback: (data: any) => void) {
+    this.on('invoice_created', callback);
+  }
 }
 
 export const webSocketService = new WebSocketService();

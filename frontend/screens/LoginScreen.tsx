@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { sendOTP, verifyOTP } from '../api';
 
 interface Props {
-  onNext: (result: { phone: string, token?: string, needsProfile?: boolean, otp?: string }) => void;
+  onNext: (result: { phone: string, token?: string, refreshToken?: string, needsProfile?: boolean, otp?: string }) => void;
 }
 
 export const LoginScreen: React.FC<Props> = ({ onNext }) => {
@@ -244,6 +244,7 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
                 onNext({
                   phone,
                   token: response.access_token,
+                  refreshToken: response.refresh_token,
                   needsProfile: response.needs_profile
                 });
               } catch (error: any) {

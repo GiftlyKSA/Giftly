@@ -17,7 +17,7 @@ import { completeProfile } from '../api';
 interface Props {
   phone: string;
   otp: string;
-  onNext: (token: string) => void;
+  onNext: (token: string, refreshToken: string) => void;
 }
 
 export const CompleteProfileScreen: React.FC<Props> = ({ phone, otp, onNext }) => {
@@ -85,7 +85,7 @@ export const CompleteProfileScreen: React.FC<Props> = ({ phone, otp, onNext }) =
         date_of_birth: birthDate!.toISOString().split('T')[0],
       });
 
-      onNext(response.access_token);
+      onNext(response.access_token, response.refresh_token);
     } catch (error: any) {
       if (error.message === 'Email is already registered') {
         setErrors({ email: 'البريد الإلكتروني مستخدم بالفعل' });

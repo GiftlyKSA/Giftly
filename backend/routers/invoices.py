@@ -70,6 +70,10 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
     order.status = "invoice_created"  # You might want to add this status to your OrderStatus enum
     await db.commit()
 
+    # Emit order status change event
+    from websocket_events import emit_order_status_change
+    await emit_order_status_change(order.id, order.status)
+
     # Emit invoice creation event
     from websocket_events import emit_invoice_created
     await emit_invoice_created(new_invoice.id, new_invoice.order_id)
@@ -144,6 +148,10 @@ async def create_invoice_by_courier(
     db.add(new_invoice)
     await db.commit()
     await db.refresh(new_invoice)
+
+    # Emit invoice creation event
+    from websocket_events import emit_invoice_created
+    await emit_invoice_created(new_invoice.id, new_invoice.order_id)
 
     return new_invoice
 

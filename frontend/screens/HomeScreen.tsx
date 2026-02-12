@@ -62,10 +62,30 @@ export const HomeScreen: React.FC<Props> = ({ onNavigateProfile, onNavigateCouri
       }
     };
 
+    const handleInvoiceCreated = (message: any) => {
+      console.log('Invoice created event received:', message);
+      if (onOrdersDataChange && ordersData) {
+        const updatedOrders = ordersData.map(order => {
+          if (order.id === message.data.id) {
+            return {
+              ...order,
+              invoice: message.data.invoice,
+              status: message.data.status,
+              updated_at: message.data.updated_at
+            };
+          }
+          return order;
+        });
+        onOrdersDataChange(updatedOrders);
+      }
+    };
+
     webSocketService.onOrderStatusChange(handleOrderStatusChange);
+    webSocketService.onInvoiceCreated(handleInvoiceCreated);
 
     return () => {
       webSocketService.off('order_status_change', handleOrderStatusChange);
+      webSocketService.off('invoice_created', handleInvoiceCreated);
     };
   }, [ordersData, onOrdersDataChange]);
 
@@ -116,6 +136,7 @@ export const HomeScreen: React.FC<Props> = ({ onNavigateProfile, onNavigateCouri
     const statusConfig: { [key: string]: { text: string; color: string; backgroundColor: string } } = {
       'new': { text: 'جديد', color: '#3B82F6', backgroundColor: 'rgba(59, 130, 246, 0.1)' },
       'received by courier': { text: 'في انتظار المندوب', color: '#8B5CF6', backgroundColor: 'rgba(139, 92, 246, 0.1)' },
+      'invoice_created': { text: 'فاتورة جاهزة', color: '#059669', backgroundColor: 'rgba(5, 150, 105, 0.1)' },
       'paid': { text: 'مدفوع', color: '#D97706', backgroundColor: 'rgba(217, 119, 6, 0.1)' },
       'in progress to do': { text: 'قيد التنفيذ', color: '#F97316', backgroundColor: 'rgba(249, 115, 22, 0.1)' },
       'cancelled': { text: 'ملغي', color: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.1)' },

@@ -1,4 +1,85 @@
+import { getRefreshToken, saveRefreshToken } from './auth';
+
 export const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://giftly-backend-tfjada.cranl.net';
+
+// Global token refresh state to prevent multiple concurrent refreshes
+let isRefreshing = false;
+let refreshPromise: Promise<string | null> | null = null;
+let updateTokenCallback: ((token: string) => void) | null = null;
+
+// Function to set the token update callback
+export const setTokenUpdateCallback = (callback: (token: string) => void) => {
+  updateTokenCallback = callback;
+};
+
+// Function to refresh token and update stored tokens
+const refreshTokenIfNeeded = async (): Promise<string | null> => {
+  if (isRefreshing) {
+    // If already refreshing, wait for the existing refresh
+    return refreshPromise;
+  }
+
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      const refreshToken = await getRefreshToken();
+      if (!refreshToken) {
+        throw new Error('No refresh token available');
+      }
+
+      const response = await refreshAccessToken(refreshToken);
+      const newAccessToken = response.access_token;
+      const newRefreshToken = response.refresh_token;
+
+      // Save the new refresh token
+      await saveRefreshToken(newRefreshToken);
+
+      // Update the token in the context
+      if (updateTokenCallback) {
+        updateTokenCallback(newAccessToken);
+      }
+
+      return newAccessToken;
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      // Clear tokens on refresh failure
+      return null;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+};
+
+// Wrapper function for authenticated API calls with automatic token refresh
+const authenticatedFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  const makeRequest = async (token?: string) => {
+    const headers = { ...options.headers } as Record<string, string>;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    return fetch(url, {
+      ...options,
+      headers,
+    });
+  };
+
+  let response = await makeRequest();
+
+  // If we get a 401 and have an Authorization header, try to refresh the token
+  if (response.status === 401 && options.headers && 'Authorization' in options.headers) {
+    const newToken = await refreshTokenIfNeeded();
+    if (newToken) {
+      // Retry the request with the new token
+      response = await makeRequest(newToken);
+    }
+  }
+
+  return response;
+};
 
 export interface SendOTPRequest {
   phone_number: string;
