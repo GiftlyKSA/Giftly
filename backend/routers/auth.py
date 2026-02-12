@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timedelta, date
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from database import get_db
@@ -173,9 +174,7 @@ async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db
     name = profile_data.get("name")
     email = profile_data.get("email")
     date_of_birth_str = profile_data.get("date_of_birth")
-    national_id = profile_data.get("national_id")
-    passport_id = profile_data.get("passport_id")
-    role = "Customer"
+    role = profile_data.get("role", "Customer")
 
     if not all([phone_number, name, email, date_of_birth_str]):
         raise HTTPException(status_code=400, detail="Name, email, and date of birth are required")
@@ -204,8 +203,6 @@ async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db
     user.name = name
     user.email = email
     user.date_of_birth = date_of_birth
-    user.national_id = national_id
-    user.passport_id = passport_id
     user.is_verified = True
     user.role = role
 
