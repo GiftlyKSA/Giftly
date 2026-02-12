@@ -1,22 +1,19 @@
-# Use Python 3.11 slim image
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code
 COPY backend/ .
 
-# Run initialization scripts to create admin user and cities
-RUN python test_scripts_for_admin_dashboard/create_admin.py
-RUN python test_scripts_for_admin_dashboard/add_cities.py
+# Copy entrypoint script
+COPY entrypoint.sh .
 
-# Expose port 80 for HTTP
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
 EXPOSE 3000
 
-# Run the application with uvicorn using HTTP
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
+# Use entrypoint to run scripts and start app
+ENTRYPOINT ["./entrypoint.sh"]
