@@ -34,6 +34,8 @@ export interface Message {
   sender: 'customer' | 'courier';
   time: string;
   isInvoice?: boolean;
+  isImage?: boolean;
+  imageId?: number; // Message ID for fetching image
   invoiceData?: {
     description: string;
     giftPrice: number;
@@ -54,6 +56,7 @@ export interface ChatMessage {
   invoice_service_fee?: number;
   invoice_delivery_fee?: number;
   invoice_total?: number;
+  image_data?: string; // Base64 encoded image data
 }
 
 export interface Notification {

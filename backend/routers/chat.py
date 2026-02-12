@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, select
 from database import get_db
-from models import Conversation, Message, User
+from models import Conversation, Message, User, Order
 from schemas import CreateConversationRequest, ConversationResponse, SendMessageRequest, MessageResponse
 from auth import get_current_user
 from typing import List
+import base64
 
 router = APIRouter()
 
@@ -126,7 +127,7 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not authorized to send messages in this conversation")
 
     # Validate message type
-    if request.message_type not in ['text', 'invoice']:
+    if request.message_type not in ['text', 'invoice', 'image']:
         raise HTTPException(status_code=400, detail="Invalid message type")
 
     # For invoice messages, ensure all invoice fields are provided
@@ -135,6 +136,11 @@ async def send_message(
         for field in required_fields:
             if getattr(request, field) is None:
                 raise HTTPException(status_code=400, detail=f"{field} is required for invoice messages")
+
+    # For image messages, ensure image_data is provided
+    if request.message_type == 'image':
+        if not request.image_data:
+            raise HTTPException(status_code=400, detail="image_data is required for image messages")
 
     # Create message
     new_message = Message(
@@ -146,7 +152,8 @@ async def send_message(
         invoice_gift_price=request.invoice_gift_price,
         invoice_service_fee=request.invoice_service_fee,
         invoice_delivery_fee=request.invoice_delivery_fee,
-        invoice_total=request.invoice_total
+        invoice_total=request.invoice_total,
+        image_data=request.image_data
     )
 
     db.add(new_message)
@@ -191,3 +198,139 @@ async def get_conversation_by_order(
         raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
     return conversation
+
+@router.put("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def update_conversation_status(
+    conversation_id: int,
+    status: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update conversation status. Only participants can update the conversation.
+    Valid statuses: active, inactive
+    """
+    # Get conversation
+    result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
+    conversation = result.scalar_one_or_none()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check authorization - user must be customer or courier for this conversation
+    if current_user.id not in [conversation.customer_id, conversation.courier_id]:
+        raise HTTPException(status_code=403, detail="Not authorized to update this conversation")
+
+    # Validate status
+    if status not in ['active', 'inactive']:
+        raise HTTPException(status_code=400, detail="Invalid status. Valid statuses: active, inactive")
+
+    # Update conversation status
+    conversation.status = status
+    await db.commit()
+    await db.refresh(conversation)
+
+    return conversation
+
+@router.get("/messages/{message_id}/image")
+async def get_message_image(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get image data for a message. Only participants of the conversation can access it.
+    """
+    # Get message
+    result = await db.execute(select(Message).where(Message.id == message_id))
+    message = result.scalar_one_or_none()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Get conversation to check authorization
+    result = await db.execute(select(Conversation).where(Conversation.id == message.conversation_id))
+    conversation = result.scalar_one_or_none()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check authorization
+    if current_user.id not in [conversation.customer_id, conversation.courier_id]:
+        raise HTTPException(status_code=403, detail="Not authorized to access this message")
+
+    # Check if message has image data
+    if not message.image_data:
+        raise HTTPException(status_code=404, detail="No image data found for this message")
+
+    # Decode base64 and return as image
+    try:
+        # Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+        if message.image_data.startswith('data:'):
+            # Extract the base64 part after the comma
+            base64_data = message.image_data.split(',')[1]
+        else:
+            base64_data = message.image_data
+
+        image_bytes = base64.b64decode(base64_data)
+
+        # Determine content type from base64 data (simple detection)
+        if base64_data.startswith('/9j/'):  # JPEG
+            content_type = 'image/jpeg'
+        elif base64_data.startswith('iVBOR'):  # PNG
+            content_type = 'image/png'
+        else:
+            content_type = 'image/jpeg'  # Default
+
+        return Response(content=image_bytes, media_type=content_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error processing image data")
+
+@router.get("/orders/{order_id}/images/{image_number}")
+async def get_order_image(
+    order_id: int,
+    image_number: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get image data for an order. Only the order creator can access it.
+    image_number should be 1, 2, or 3
+    """
+    if image_number not in [1, 2, 3]:
+        raise HTTPException(status_code=400, detail="Invalid image number. Must be 1, 2, or 3")
+
+    # Get order
+    result = await db.execute(select(Order).where(Order.id == order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Check authorization - only order creator can access
+    if current_user.id != order.created_by_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this order")
+
+    # Get the appropriate image data
+    image_data = getattr(order, f'image{image_number}_data')
+    if not image_data:
+        raise HTTPException(status_code=404, detail=f"No image data found for image {image_number}")
+
+    # Decode base64 and return as image
+    try:
+        # Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+        if image_data.startswith('data:'):
+            # Extract the base64 part after the comma
+            base64_data = image_data.split(',')[1]
+        else:
+            base64_data = image_data
+
+        image_bytes = base64.b64decode(base64_data)
+
+        # Determine content type from base64 data (simple detection)
+        if base64_data.startswith('/9j/'):  # JPEG
+            content_type = 'image/jpeg'
+        elif base64_data.startswith('iVBOR'):  # PNG
+            content_type = 'image/png'
+        else:
+            content_type = 'image/jpeg'  # Default
+
+        return Response(content=image_bytes, media_type=content_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error processing image data")

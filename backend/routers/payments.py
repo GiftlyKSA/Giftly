@@ -68,6 +68,33 @@ async def create_payment(payment_data: CreatePayment, current_user=Depends(get_c
         invoice.order.updated_at = datetime.utcnow()
         await db.commit()
 
+        # Send chat message about successful payment
+        if invoice.order.conversation:
+            from websocket_events import emit_chat_message
+            from models import Message
+
+            payment_message_content = f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {total_paid:.2f} ريال"
+
+            payment_message = Message(
+                conversation_id=invoice.order.conversation.id,
+                sender_id=current_user.id,  # Customer who paid
+                content=payment_message_content,
+                message_type='text'
+            )
+            db.add(payment_message)
+            await db.commit()
+            await db.refresh(payment_message)
+
+            # Emit the payment message via WebSocket
+            await emit_chat_message(invoice.order.conversation.id, {
+                "id": payment_message.id,
+                "conversation_id": payment_message.conversation_id,
+                "sender_id": payment_message.sender_id,
+                "content": payment_message.content,
+                "message_type": payment_message.message_type,
+                "sent_at": payment_message.sent_at.isoformat()
+            }, db)
+
         # Emit order status change event
         from websocket_events import emit_order_status_change
         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
@@ -246,6 +273,35 @@ async def pay_with_wallet(
         db.add(payment)
         await db.commit()
         await db.refresh(payment)
+
+        # Send chat message about successful payment
+        if invoice.order.conversation:
+            from websocket_events import emit_chat_message
+            from models import Message
+
+            payment_message_content = f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {payment_amount:.2f} ريال"
+            if coupon_used:
+                payment_message_content += f"\n(تم تطبيق خصم: {discount_amount:.2f} ريال)"
+
+            payment_message = Message(
+                conversation_id=invoice.order.conversation.id,
+                sender_id=current_user.id,  # Customer who paid
+                content=payment_message_content,
+                message_type='text'
+            )
+            db.add(payment_message)
+            await db.commit()
+            await db.refresh(payment_message)
+
+            # Emit the payment message via WebSocket
+            await emit_chat_message(invoice.order.conversation.id, {
+                "id": payment_message.id,
+                "conversation_id": payment_message.conversation_id,
+                "sender_id": payment_message.sender_id,
+                "content": payment_message.content,
+                "message_type": payment_message.message_type,
+                "sent_at": payment_message.sent_at.isoformat()
+            }, db)
 
         # Emit order status change event
         from websocket_events import emit_order_status_change

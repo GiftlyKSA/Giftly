@@ -314,7 +314,7 @@ export const InvoiceScreen: React.FC<Props> = ({ onBack, invoiceId }) => {
                 <Text style={styles.totalAmountSubLabel}>صافي المدفوع</Text>
               </View>
               <View style={styles.totalAmountRight}>
-                <Text style={styles.totalAmountValue}>{invoice.full_amount.toFixed(2)}</Text>
+                <Text style={styles.totalAmountValue}>{(invoice.full_amount || 0).toFixed(2)}</Text>
                 <Text style={styles.totalAmountCurrency}>ر.س</Text>
               </View>
             </View>

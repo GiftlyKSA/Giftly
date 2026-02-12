@@ -11,7 +11,7 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 interface Props {
   onNext: (orderId: string) => void;
   onBack: () => void;
-  orderData?: { description?: string; deliveryDate?: Date };
+  orderData?: { description?: string; deliveryDate?: Date; images?: (string | null)[] };
 }
 
 export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData }) => {
@@ -56,10 +56,22 @@ export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData
     setLoading(true);
     try {
       console.log('CitySelectionScreen: Calling createOrder API');
+
+      // Prepare image data
+      const imageData: any = {};
+      if (orderData?.images) {
+        orderData.images.forEach((img, index) => {
+          if (img) {
+            imageData[`image${index + 1}_data`] = img;
+          }
+        });
+      }
+
       const order = await createOrder(token, {
         description: orderData?.description || '',
         city_id: parseInt(selected),
         delivery_date: orderData.deliveryDate.toISOString(),
+        ...imageData,
       });
       console.log('CitySelectionScreen: Order created successfully:', order);
       console.log('CitySelectionScreen: Order ID =', order.order_id);
@@ -141,6 +153,9 @@ export const CitySelectionScreen: React.FC<Props> = ({ onNext, onBack, orderData
           </Text>
         </Pressable>
       </View>
+
+
+
     </View>
   );
 };
@@ -178,6 +193,7 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

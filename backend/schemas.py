@@ -125,6 +125,9 @@ class CreateOrder(BaseModel):
     description: Optional[str] = None
     city_id: int
     delivery_date: datetime
+    image1_data: Optional[str] = None  # Base64 encoded image data
+    image2_data: Optional[str] = None  # Base64 encoded image data
+    image3_data: Optional[str] = None  # Base64 encoded image data
 
     @validator('description')
     def validate_description(cls, v):
@@ -225,12 +228,13 @@ class ConversationResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     content: str
-    message_type: str = "text"  # "text" or "invoice"
+    message_type: str = "text"  # "text", "invoice", or "image"
     invoice_description: Optional[str] = None
     invoice_gift_price: Optional[int] = None
     invoice_service_fee: Optional[int] = None
     invoice_delivery_fee: Optional[int] = None
     invoice_total: Optional[int] = None
+    image_data: Optional[str] = None  # Base64 encoded image data
 
 class MessageResponse(BaseModel):
     id: int
@@ -244,6 +248,7 @@ class MessageResponse(BaseModel):
     invoice_service_fee: Optional[int]
     invoice_delivery_fee: Optional[int]
     invoice_total: Optional[int]
+    image_data: Optional[str]  # Base64 encoded image data
 
     class Config:
         from_attributes = True

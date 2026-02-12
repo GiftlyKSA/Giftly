@@ -37,7 +37,10 @@ async def create_order(order_data: CreateOrder, current_user: User = Depends(get
         description=order_data.description,
         city_id=order_data.city_id,
         delivery_date=order_data.delivery_date,
-        status=OrderStatus.NEW  # Default status
+        status=OrderStatus.NEW,  # Default status
+        image1_data=order_data.image1_data,
+        image2_data=order_data.image2_data,
+        image3_data=order_data.image3_data
     )
 
     db.add(new_order)
@@ -80,6 +83,58 @@ async def create_order(order_data: CreateOrder, current_user: User = Depends(get
             "message_type": initial_message.message_type,
             "sent_at": initial_message.sent_at.isoformat()
         }, db)
+
+    # Create image messages for each image in the order
+    image_messages = []
+    if order_data.image1_data:
+        image_message1 = Message(
+            conversation_id=new_conversation.id,
+            sender_id=current_user.id,
+            content="صورة الطلب 1",  # "Order image 1"
+            message_type='image',
+            image_data=order_data.image1_data
+        )
+        db.add(image_message1)
+        image_messages.append(image_message1)
+
+    if order_data.image2_data:
+        image_message2 = Message(
+            conversation_id=new_conversation.id,
+            sender_id=current_user.id,
+            content="صورة الطلب 2",  # "Order image 2"
+            message_type='image',
+            image_data=order_data.image2_data
+        )
+        db.add(image_message2)
+        image_messages.append(image_message2)
+
+    if order_data.image3_data:
+        image_message3 = Message(
+            conversation_id=new_conversation.id,
+            sender_id=current_user.id,
+            content="صورة الطلب 3",  # "Order image 3"
+            message_type='image',
+            image_data=order_data.image3_data
+        )
+        db.add(image_message3)
+        image_messages.append(image_message3)
+
+    # Commit all image messages
+    if image_messages:
+        await db.commit()
+
+        # Emit each image message via WebSocket
+        for image_message in image_messages:
+            await db.refresh(image_message)
+            await emit_chat_message(new_conversation.id, {
+                "id": image_message.id,
+                "conversation_id": image_message.conversation_id,
+                "sender_id": image_message.sender_id,
+                "content": image_message.content,
+                "message_type": image_message.message_type,
+                "image_data": image_message.image_data,
+                "sent_at": image_message.sent_at.isoformat()
+            }, db)
 
     # Emit order creation event
     await emit_order_status_change(new_order.id, new_order.status.value)
@@ -472,3 +527,43 @@ async def complete_order(order_id: str, current_user: User = Depends(get_current
         await db.rollback()
         print(f"Error completing order: {e}")
         raise HTTPException(status_code=500, detail="-/+ .7# #+F'! %CE'D 'D7D(. J1,I 'DE-'HD) E1) #.1I.")
+
+
+@router.put("/{order_id}/status", response_model=OrderResponse)
+async def update_order_status(
+    order_id: str,
+    status: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update order status. Only the assigned courier can update order status.
+    Valid statuses: received by courier, in_progress, ready_for_delivery, out_for_delivery
+    """
+    if current_user.role != "Courier":
+        raise HTTPException(status_code=403, detail="Only couriers can update order status")
+
+    result = await db.execute(select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.assigned_to_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Order is not assigned to you")
+
+    # Validate status
+    valid_statuses = ["received by courier", "in_progress", "ready_for_delivery", "out_for_delivery"]
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid statuses: {', '.join(valid_statuses)}")
+
+    # Update order status
+    order.status = status
+    order.updated_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(order)
+
+    # Emit order status change event
+    await emit_order_status_change(order.id, order.status)
+
+    return order

@@ -1,14 +1,16 @@
 
 import React, { useState } from 'react';
-import { View, Text, Pressable,TextInput, ScrollView, StyleSheet, Dimensions,Platform, Modal } from 'react-native';
+import { View, Text, Pressable,TextInput, ScrollView, StyleSheet, Dimensions,Platform, Modal, Image, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as ImagePicker from 'expo-image-picker';
+import { MediaType } from 'expo-image-picker';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface Props {
-  onNext: (description: string, deliveryDate: Date) => void;
+  onNext: (description: string, deliveryDate: Date, images?: (string | null)[]) => void;
   onBack: () => void;
 }
 
@@ -19,6 +21,8 @@ export const BudgetScreen: React.FC<Props> = ({ onNext, onBack }) => {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateError, setDateError] = useState('');
   const [tempDate, setTempDate] = useState<Date>(new Date());
+  const [showImagePickerModal, setShowImagePickerModal] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<(string | null)[]>([null, null, null]);
 
   const formatArabicDate = (date: Date) => {
     const arabicMonths = [
@@ -33,6 +37,78 @@ export const BudgetScreen: React.FC<Props> = ({ onNext, onBack }) => {
     return `${day} ${month} ${year}`;
   };
 
+  const handleImageSelect = (index: number) => {
+    setShowImagePickerModal(true);
+    // Store which image slot we're selecting
+    (setShowImagePickerModal as any).currentIndex = index;
+  };
+
+  const handleImagePickerOption = async (source: 'camera' | 'gallery') => {
+    const currentIndex = (setShowImagePickerModal as any).currentIndex;
+    setShowImagePickerModal(false);
+
+    try {
+      // Request permissions
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('خطأ', 'يجب السماح بالوصول للكاميرا');
+          return;
+        }
+      }
+        else if (source === 'gallery') {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('خطأ', 'يجب السماح بالوصول للمعرض');
+            return;
+          }
+      }
+
+      // Launch image picker or camera
+      const result = source === 'gallery'
+        ? await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.8,
+            base64: true,
+          })
+        : await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.8,
+            base64: true,
+          });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        // Convert to base64 for storage
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+
+        // Update selected images
+        const newImages = [...selectedImages];
+        newImages[currentIndex] = base64;
+        setSelectedImages(newImages);
+      }
+    } catch (error) {
+      console.error('Image picker error:', error);
+      Alert.alert('خطأ', 'فشل في اختيار الصورة');
+    }
+  };
+
+  const removeImage = (index: number) => {
+    const newImages = [...selectedImages];
+    newImages[index] = null;
+    setSelectedImages(newImages);
+  };
+
   const handleNext = () => {
     // Clear previous errors
     setDateError('');
@@ -44,7 +120,7 @@ export const BudgetScreen: React.FC<Props> = ({ onNext, onBack }) => {
     }
 
     // Proceed to next screen
-    onNext(description, deliveryDate);
+    onNext(description, deliveryDate, selectedImages);
   };
   return (
     <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: insets.top + screenHeight * 0.03 }]}>
@@ -96,6 +172,36 @@ export const BudgetScreen: React.FC<Props> = ({ onNext, onBack }) => {
           <Text style={styles.infoText}>
             اذا ماتعرف وش الهديه لاتشيل هم اترك الوصف وحدد تاريخ تسليم الهديه وخل المندوب يضبطك .
           </Text>
+        </View>
+
+        {/* Image Selection Section */}
+        <View style={styles.imageSection}>
+          <Text style={styles.imageSectionTitle}>صور الطلب (اختياري - حد أقصى 3 صور)</Text>
+          <View style={styles.imageGrid}>
+            {[0, 1, 2].map((index) => (
+              <View key={index} style={styles.imageSlot}>
+                {selectedImages[index] ? (
+                  <View style={styles.imageContainer}>
+                    <Image source={{ uri: selectedImages[index]! }} style={styles.selectedImage} />
+                    <Pressable
+                      onPress={() => removeImage(index)}
+                      style={styles.removeImageButton}
+                    >
+                      <Feather name="x" size={16} color="white" />
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => handleImageSelect(index)}
+                    style={styles.addImageButton}
+                  >
+                    <Feather name="plus" size={24} color="#E0AAFF" />
+                    <Text style={styles.addImageText}>إضافة صورة</Text>
+                  </Pressable>
+                )}
+              </View>
+            ))}
+          </View>
         </View>
         </View>
 
@@ -175,6 +281,45 @@ export const BudgetScreen: React.FC<Props> = ({ onNext, onBack }) => {
           </View>
         </Modal>
 
+        {/* Image Picker Modal */}
+        <Modal
+          visible={showImagePickerModal}
+          animationType="fade"
+          transparent={true}
+          onRequestClose={() => setShowImagePickerModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.imagePickerModal}>
+              <View style={styles.imagePickerModalHeader}>
+                <Text style={styles.imagePickerModalTitle}>اختر صورة</Text>
+                <Pressable onPress={() => setShowImagePickerModal(false)} style={styles.closeButton}>
+                  <Feather name="x" size={20} color="#9CA3AF" />
+                </Pressable>
+              </View>
+
+              <View style={styles.imagePickerOptions}>
+                <Pressable
+                  onPress={() => handleImagePickerOption('gallery')}
+                  style={styles.imagePickerOption}
+                >
+                  <View style={styles.imagePickerOptionIcon}>
+                    <Feather name="image" size={24} color="#E0AAFF" />
+                  </View>
+                  <Text style={styles.imagePickerOptionText}>من المعرض</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleImagePickerOption('camera')}
+                  style={styles.imagePickerOption}
+                >
+                  <View style={styles.imagePickerOptionIcon}>
+                    <Feather name="camera" size={24} color="#E0AAFF" />
+                  </View>
+                  <Text style={styles.imagePickerOptionText}>الكاميرا</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         <View style={styles.buttonContainer}>
           <Pressable onPress={handleNext} style={styles.button}>
@@ -359,5 +504,117 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'right',
     marginTop: screenHeight * 0.005,
+  },
+  imageSection: {
+    paddingTop: screenHeight * 0.02,
+    paddingBottom: screenHeight * 0.03,
+  },
+  imageSectionTitle: {
+    fontSize: screenWidth * 0.04,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: screenHeight * 0.02,
+    textAlign: 'right',
+  },
+  imageGrid: {
+    flexDirection: 'row',
+    gap: screenWidth * 0.03,
+  },
+  imageSlot: {
+    flex: 1,
+    aspectRatio: 1,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  addImageButton: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(224, 170, 255, 0.1)',
+    borderWidth: 2,
+    borderColor: 'rgba(224, 170, 255, 0.3)',
+    borderStyle: 'dashed',
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: screenHeight * 0.01,
+  },
+  addImageText: {
+    fontSize: screenWidth * 0.03,
+    fontWeight: 'bold',
+    color: '#E0AAFF',
+    textAlign: 'center',
+  },
+  imageContainer: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+  },
+  selectedImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+    borderRadius: 12,
+    padding: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imagePickerModal: {
+    backgroundColor: 'white',
+    borderRadius: 32,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  imagePickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  imagePickerModalTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#1F2937',
+  },
+  closeButton: {
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+  },
+  imagePickerOptions: {
+    gap: 16,
+  },
+  imagePickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  imagePickerOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(224, 170, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  imagePickerOptionText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1F2937',
   },
 });

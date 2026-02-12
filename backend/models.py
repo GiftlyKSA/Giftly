@@ -138,6 +138,10 @@ class Order(Base):
     comments = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=False)
+    # Order images (maximum 3, stored as BLOB)
+    image1_data = Column(Text, nullable=True)  # Base64 encoded image data
+    image2_data = Column(Text, nullable=True)  # Base64 encoded image data
+    image3_data = Column(Text, nullable=True)  # Base64 encoded image data
 
     # Relationships
     created_by_user = relationship("User", back_populates="created_orders", foreign_keys=[created_by_user_id])
@@ -245,13 +249,15 @@ class Message(Base):
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     content = Column(Text, nullable=False)
     sent_at = Column(DateTime(timezone=True), nullable=False, server_default=text('CURRENT_TIMESTAMP'))
-    message_type = Column(String(20), nullable=False, default='text')  # 'text' or 'invoice'
+    message_type = Column(String(20), nullable=False, default='text')  # 'text', 'invoice', or 'image'
     # Invoice specific fields
     invoice_description = Column(Text, nullable=True)
     invoice_gift_price = Column(Integer, nullable=True)  # in cents/halaym
     invoice_service_fee = Column(Integer, nullable=True)
     invoice_delivery_fee = Column(Integer, nullable=True)
     invoice_total = Column(Integer, nullable=True)
+    # Image specific fields (stored as BLOB)
+    image_data = Column(Text, nullable=True)  # Base64 encoded image data
 
     # Relationships
     conversation = relationship("Conversation", back_populates="messages")

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, Pressable, ScrollView, TextInput, StyleSheet, Image, Modal, Alert, Keyboard, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { Message, ChatMessage } from '../types';
 import { useAuth } from '../App';
 import { cancelOrder, getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, getConversationByOrder, Conversation } from '../api';
@@ -43,6 +44,8 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
   const [sendingMessage, setSendingMessage] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [confirmingDelivery, setConfirmingDelivery] = useState(false);
+  const [showImagePickerModal, setShowImagePickerModal] = useState(false);
 
   const { token, user } = useAuth();
   const onChatStateChangeRef = useRef(onChatStateChange);
@@ -178,6 +181,8 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
       sender: isCourier ? 'courier' : 'customer',
       time: timeString,
       isInvoice: chatMsg.message_type === 'invoice',
+      isImage: chatMsg.message_type === 'image',
+      imageId: chatMsg.message_type === 'image' ? chatMsg.id : undefined,
       invoiceData: chatMsg.message_type === 'invoice' ? {
         description: chatMsg.invoice_description || '',
         giftPrice: chatMsg.invoice_gift_price || 0,
@@ -255,10 +260,25 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
       }
     };
 
+    // Listen for invoice update events
+    const handleInvoiceUpdated = (message: any) => {
+      console.log('Invoice updated event received:', message);
+      if (message.data.order_id === order?.order_id) {
+        // Update order with updated invoice data
+        setOrder(prev => prev ? {
+          ...prev,
+          invoice: message.data.invoice,
+          status: message.data.status,
+          updated_at: message.data.updated_at
+        } : null);
+      }
+    };
+
     webSocketService.onChatMessage(handleChatMessage);
     webSocketService.on('chat_available', handleChatAvailable);
     webSocketService.onOrderStatusChange(handleOrderStatusChange);
     webSocketService.on('invoice_created', handleInvoiceCreated);
+    webSocketService.on('invoice_updated', handleInvoiceUpdated);
 
     // Cleanup function
     return () => {
@@ -392,14 +412,96 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
   };
 
   const handleAttachImage = () => {
-    // محاكاة إرسال صورة
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: "تم إرفاق صورة 📸",
-      sender: 'customer',
-      time: 'الآن',
-    };
-    setMessages([...messages, newMessage]);
+    setShowImagePickerModal(true);
+  };
+
+  const handleImagePickerOption = async (source: 'camera' | 'gallery') => {
+    setShowImagePickerModal(false);
+
+    try {
+      // Request permissions
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('خطأ', 'يجب السماح بالوصول للكاميرا');
+          return;
+        }
+      }
+      else if (source === 'gallery') {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('خطأ', 'يجب السماح بالوصول إلى المعرض');
+          return;
+        }
+      }
+
+      // Launch image picker
+      const result = source === 'gallery'
+              ? await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ['images'],
+                  allowsEditing: true,
+                  aspect: [4, 3],
+                  quality: 0.8,
+                  base64: true,
+                })
+              : await ImagePicker.launchCameraAsync({
+                  mediaTypes: ['images'],
+                  allowsEditing: true,
+                  aspect: [4, 3],
+                  quality: 0.8,
+                  base64: true,
+                });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        await sendImageMessage(imageUri);
+      }
+    } catch (error) {
+      console.error('Image picker error:', error);
+      Alert.alert('خطأ', 'فشل في اختيار الصورة');
+    }
+  };
+
+  const sendImageMessage = async (imageUri: string) => {
+    if (!conversation || !token) {
+      Alert.alert('خطأ', 'لا توجد محادثة متاحة');
+      return;
+    }
+
+    try {
+      // Convert image to base64
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+
+      // Send message via WebSocket
+      const room = `chat_${conversation.id}`;
+      webSocketService.sendChatMessage(room, '', 'image', base64);
+
+      // Optimistic update
+      const optimisticMessage: Message = {
+        id: `temp_${Date.now()}`,
+        text: '',
+        sender: 'customer',
+        time: new Date().toLocaleTimeString('ar-SA', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        isImage: true,
+        imageId: `temp_${Date.now()}`,
+      };
+
+      setMessages(prev => [...prev, optimisticMessage]);
+      scrollToBottom();
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('خطأ', 'فشل في إرسال الصورة');
+    }
   };
 
   const handleConfirmCancel = async () => {
@@ -443,6 +545,58 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
         setErrorMessage('');
       }, 3000);
     }
+  };
+
+  const handleConfirmDelivery = async () => {
+    if (!order || !token) {
+      Alert.alert('خطأ', 'معلومات غير كافية');
+      return;
+    }
+
+    Alert.alert(
+      'تأكيد الاستلام',
+      'هل أنت متأكد من استلام الطلب؟',
+      [
+        { text: 'لا', style: 'cancel' },
+        {
+          text: 'نعم',
+          onPress: async () => {
+            setConfirmingDelivery(true);
+            try {
+              // Call the complete order API to mark as done
+              const response = await fetch(`${API_BASE_URL}/orders/${order.order_id}/complete`, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'فشل في تأكيد الاستلام');
+              }
+
+              const updatedOrder = await response.json();
+
+              // Update local order state
+              setOrder(prev => prev ? {
+                ...prev,
+                status: updatedOrder.status,
+                updated_at: updatedOrder.updated_at
+              } : null);
+
+              Alert.alert('نجح', 'تم تأكيد استلام الطلب بنجاح!');
+            } catch (error: any) {
+              console.error('Error confirming delivery:', error);
+              Alert.alert('خطأ', error.message || 'فشل في تأكيد الاستلام');
+            } finally {
+              setConfirmingDelivery(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
   // No loading screen - show content immediately for better UX
@@ -498,11 +652,22 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
         )}
         {messages.map((msg) => (
           <View key={msg.id} style={[styles.messageContainer, msg.sender === 'customer' ? styles.customerMessage : styles.courierMessage]}>
-            <View style={[styles.messageBubble, msg.sender === 'customer' ? styles.customerBubble : styles.courierBubble]}>
-              <Text style={[styles.messageText, msg.sender === 'customer' ? styles.customerText : styles.courierText]}>
-                {msg.text}
-              </Text>
-            </View>
+            {msg.isImage && msg.imageId ? (
+              <View style={[styles.imageMessageBubble, msg.sender === 'customer' ? styles.customerBubble : styles.courierBubble]}>
+                <Image source={{ uri: `${API_BASE_URL}/messages/${msg.imageId}/image` }} style={styles.messageImage} />
+                {msg.text && (
+                  <Text style={[styles.imageCaption, msg.sender === 'customer' ? styles.customerText : styles.courierText]}>
+                    {msg.text}
+                  </Text>
+                )}
+              </View>
+            ) : (
+              <View style={[styles.messageBubble, msg.sender === 'customer' ? styles.customerBubble : styles.courierBubble]}>
+                <Text style={[styles.messageText, msg.sender === 'customer' ? styles.customerText : styles.courierText]}>
+                  {msg.text}
+                </Text>
+              </View>
+            )}
             <Text style={styles.messageTime}>{msg.time}</Text>
           </View>
         ))}
@@ -510,6 +675,18 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
 
       {/* Input Area */}
       <View style={[styles.inputArea, { paddingBottom: Math.max(insets.bottom, 16) + keyboardHeight }]}>
+        {order && (order.status === 'ready_for_delivery' || order.status === 'out_for_delivery') && (
+          <Pressable onPress={handleConfirmDelivery} style={styles.deliveryButton} disabled={confirmingDelivery}>
+            {confirmingDelivery ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <>
+                <Feather name="check-circle" size={16} color="white" />
+                <Text style={styles.deliveryButtonText}>تأكيد الاستلام</Text>
+              </>
+            )}
+          </Pressable>
+        )}
         {order && order.invoice && onShowInvoice && (
           <Pressable onPress={() => {
             console.log(`you have clicked on invoice number ${order.invoice.invoice_id} for order id ${order.id}`);
@@ -642,6 +819,47 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
           </View>
         </View>
       )}
+
+      {/* Image Picker Modal */}
+      <Modal
+        visible={showImagePickerModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowImagePickerModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.imagePickerModal}>
+            <View style={styles.imagePickerModalHeader}>
+              <Text style={styles.imagePickerModalTitle}>اختر صورة</Text>
+              <Pressable onPress={() => setShowImagePickerModal(false)} style={styles.closeButton}>
+                <Feather name="x" size={20} color="#9CA3AF" />
+              </Pressable>
+            </View>
+
+            <View style={styles.imagePickerOptions}>
+              <Pressable
+                onPress={() => handleImagePickerOption('gallery')}
+                style={styles.imagePickerOption}
+              >
+                <View style={styles.imagePickerOptionIcon}>
+                  <Feather name="image" size={24} color="#E0AAFF" />
+                </View>
+                <Text style={styles.imagePickerOptionText}>من المعرض</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => handleImagePickerOption('camera')}
+                style={styles.imagePickerOption}
+              >
+                <View style={styles.imagePickerOptionIcon}>
+                  <Feather name="camera" size={24} color="#E0AAFF" />
+                </View>
+                <Text style={styles.imagePickerOptionText}>الكاميرا</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };
@@ -797,6 +1015,27 @@ const styles = StyleSheet.create({
     color: '#E0AAFF',
     fontWeight: 'bold',
   },
+  deliveryButton: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    alignSelf: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  deliveryButtonText: {
+    fontSize: 12,
+    color: 'white',
+    fontWeight: 'bold',
+  },
   chatContainer: {
     flex: 1,
   },
@@ -852,6 +1091,29 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 6,
     marginHorizontal: 8,
+  },
+  imageMessageBubble: {
+    borderRadius: 28,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    maxWidth: 250,
+  },
+  messageImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 20,
+    resizeMode: 'cover',
+  },
+  imageCaption: {
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 20,
+    marginTop: 8,
+    paddingHorizontal: 4,
   },
   inputArea: {
     padding: 16,
@@ -1184,5 +1446,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1E40AF',
     lineHeight: 20,
+  },
+  imagePickerModal: {
+    backgroundColor: 'white',
+    borderRadius: 32,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  imagePickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  imagePickerModalTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#1F2937',
+  },
+  imagePickerOptions: {
+    gap: 16,
+  },
+  imagePickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  imagePickerOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(224, 170, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  imagePickerOptionText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1F2937',
   },
 });

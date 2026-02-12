@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, Pressable, ScrollView, TextInput, StyleSheet, Image, Modal, Alert, Keyboard, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { Message, ChatMessage } from '../types';
 import { useAuth } from '../App';
 import { getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, getConversationByOrder, Conversation, createInvoice, updateInvoice } from '../api';
@@ -45,6 +46,10 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
   const [serviceFee, setServiceFee] = useState('');
   const [deliveryFee, setDeliveryFee] = useState('');
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [closingConversation, setClosingConversation] = useState(false);
+  const [showImagePickerModal, setShowImagePickerModal] = useState(false);
 
   const { token, userData } = useAuth();
   const onChatStateChangeRef = useRef(onChatStateChange);
@@ -173,6 +178,8 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
       sender: isCustomer ? 'customer' : 'courier',
       time: timeString,
       isInvoice: chatMsg.message_type === 'invoice',
+      isImage: chatMsg.message_type === 'image',
+      imageId: chatMsg.message_type === 'image' ? chatMsg.id : undefined,
       invoiceData: chatMsg.message_type === 'invoice' ? {
         description: chatMsg.invoice_description || '',
         giftPrice: chatMsg.invoice_gift_price || 0,
@@ -344,14 +351,96 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
   };
 
   const handleAttachImage = () => {
-    // محاكاة إرسال صورة
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: "تم إرفاق صورة 📸",
-      sender: 'courier',
-      time: 'الآن',
-    };
-    setMessages([...messages, newMessage]);
+    setShowImagePickerModal(true);
+  };
+
+  const handleImagePickerOption = async (source: 'camera' | 'gallery') => {
+    setShowImagePickerModal(false);
+
+    try {
+      // Request permissions
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('خطأ', 'يجب السماح بالوصول للكاميرا');
+          return;
+        }
+      }
+      else if (source === 'gallery') {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('خطأ', 'يجب السماح بالوصول إلى المعرض');
+          return;
+        }
+      } 
+
+      // Launch image picker
+      const result = source === 'gallery'
+              ? await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ['images'],
+                  allowsEditing: true,
+                  aspect: [4, 3],
+                  quality: 0.8,
+                  base64: true,
+                })
+              : await ImagePicker.launchCameraAsync({
+                  mediaTypes: ['images'],
+                  allowsEditing: true,
+                  aspect: [4, 3],
+                  quality: 0.8,
+                  base64: true,
+                });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        await sendImageMessage(imageUri);
+      }
+    } catch (error) {
+      console.error('Image picker error:', error);
+      Alert.alert('خطأ', 'فشل في اختيار الصورة');
+    }
+  };
+
+  const sendImageMessage = async (imageUri: string) => {
+    if (!conversation || !token) {
+      Alert.alert('خطأ', 'لا توجد محادثة متاحة');
+      return;
+    }
+
+    try {
+      // Convert image to base64
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+
+      // Send message via WebSocket
+      const room = `chat_${conversation.id}`;
+      webSocketService.sendChatMessage(room, '', 'image', base64);
+
+      // Optimistic update
+      const optimisticMessage: Message = {
+        id: `temp_${Date.now()}`,
+        text: '',
+        sender: 'courier',
+        time: new Date().toLocaleTimeString('ar-SA', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        isImage: true,
+        imageId: `temp_${Date.now()}`,
+      };
+
+      setMessages(prev => [...prev, optimisticMessage]);
+      scrollToBottom();
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('خطأ', 'فشل في إرسال الصورة');
+    }
   };
 
   const handleInvoicePress = () => {
@@ -435,14 +524,102 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
       } : null);
 
       setShowInvoiceModal(false);
-      const totalPrice = parseFloat(total.toFixed(2));
-      Alert.alert('نجح', isEditing ? `تم تحديث الفاتورة بنجاح\nالمبلغ الإجمالي: ${totalPrice} ريال` : `تم إنشاء الفاتورة بنجاح\nالمبلغ الإجمالي: ${totalPrice} ريال`);
+      // No popup - message will be sent in chat instead
     } catch (error: any) {
       console.error('Error creating/updating invoice:', error);
       Alert.alert('خطأ', error.message || 'فشل في إنشاء/تحديث الفاتورة');
     } finally {
       setCreatingInvoice(false);
     }
+  };
+
+  const handleStatusUpdate = async (newStatus: string) => {
+    if (!order || !token) {
+      Alert.alert('خطأ', 'معلومات غير كافية');
+      return;
+    }
+
+    setUpdatingStatus(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders/${order.order_id}/status`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'فشل في تحديث حالة الطلب');
+      }
+
+      const updatedOrder = await response.json();
+
+      // Update local order state
+      setOrder(prev => prev ? {
+        ...prev,
+        status: updatedOrder.status,
+        updated_at: updatedOrder.updated_at
+      } : null);
+
+      setShowStatusModal(false);
+      Alert.alert('نجح', `تم تحديث حالة الطلب إلى: ${newStatus}`);
+    } catch (error: any) {
+      console.error('Error updating order status:', error);
+      Alert.alert('خطأ', error.message || 'فشل في تحديث حالة الطلب');
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handleCloseConversation = async () => {
+    if (!conversation || !token) {
+      Alert.alert('خطأ', 'معلومات غير كافية');
+      return;
+    }
+
+    Alert.alert(
+      'إغلاق المحادثة',
+      'هل أنت متأكد من رغبتك في إغلاق المحادثة؟ لن تتمكن من إرسال رسائل جديدة بعد الإغلاق.',
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        {
+          text: 'إغلاق',
+          style: 'destructive',
+          onPress: async () => {
+            setClosingConversation(true);
+            try {
+              // Update conversation status to inactive
+              const response = await fetch(`${API_BASE_URL}/conversations/${conversation.id}`, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ status: 'inactive' }),
+              });
+
+              if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'فشل في إغلاق المحادثة');
+              }
+
+              // Update local conversation state
+              setConversation(prev => prev ? { ...prev, status: 'inactive' } : null);
+
+              Alert.alert('نجح', 'تم إغلاق المحادثة بنجاح');
+            } catch (error: any) {
+              console.error('Error closing conversation:', error);
+              Alert.alert('خطأ', error.message || 'فشل في إغلاق المحادثة');
+            } finally {
+              setClosingConversation(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
 
@@ -473,7 +650,23 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
           </Pressable>
         </View>
         <View style={styles.headerActions}>
-          {/* Cancel order functionality removed for couriers */}
+          {order?.status === 'done' ? (
+            <Pressable onPress={handleCloseConversation} style={styles.closeButton} disabled={closingConversation}>
+              {closingConversation ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <>
+                  <Feather name="x-circle" size={16} color="white" />
+                  <Text style={styles.closeButtonText}>إغلاق المحادثة</Text>
+                </>
+              )}
+            </Pressable>
+          ) : (
+            <Pressable onPress={() => setShowStatusModal(true)} style={styles.statusButton}>
+              <Feather name="refresh-cw" size={16} color="#1E40AF" />
+              <Text style={styles.statusButtonText}>تحديث الحالة</Text>
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -490,11 +683,22 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
         )}
         {messages.map((msg) => (
           <View key={msg.id} style={[styles.messageContainer, msg.sender === 'courier' ? styles.customerMessage : styles.courierMessage]}>
-            <View style={[styles.messageBubble, msg.sender === 'courier' ? styles.customerBubble : styles.courierBubble]}>
-              <Text style={[styles.messageText, msg.sender === 'courier' ? styles.customerText : styles.courierText]}>
-                {msg.text}
-              </Text>
-            </View>
+            {msg.isImage && msg.imageId ? (
+              <View style={[styles.imageMessageBubble, msg.sender === 'courier' ? styles.customerBubble : styles.courierBubble]}>
+                <Image source={{ uri: `${API_BASE_URL}/messages/${msg.imageId}/image` }} style={styles.messageImage} />
+                {msg.text && (
+                  <Text style={[styles.imageCaption, msg.sender === 'courier' ? styles.customerText : styles.courierText]}>
+                    {msg.text}
+                  </Text>
+                )}
+              </View>
+            ) : (
+              <View style={[styles.messageBubble, msg.sender === 'courier' ? styles.customerBubble : styles.courierBubble]}>
+                <Text style={[styles.messageText, msg.sender === 'courier' ? styles.customerText : styles.courierText]}>
+                  {msg.text}
+                </Text>
+              </View>
+            )}
             <Text style={styles.messageTime}>{msg.time}</Text>
           </View>
         ))}
@@ -629,6 +833,96 @@ export const CourierChatScreen: React.FC<Props> = ({ orderId, onBack, onShowInvo
         </View>
       </Modal>
 
+      {/* Status Update Modal */}
+      <Modal
+        visible={showStatusModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowStatusModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.statusModal}>
+            <View style={styles.statusModalHeader}>
+              <Text style={styles.statusModalTitle}>تحديث حالة الطلب</Text>
+              <Pressable onPress={() => setShowStatusModal(false)} style={styles.closeButton}>
+                <Feather name="x" size={20} color="#9CA3AF" />
+              </Pressable>
+            </View>
+
+            <Text style={styles.statusModalSubtitle}>اختر الحالة الجديدة للطلب:</Text>
+
+            <View style={styles.statusOptions}>
+              {[
+                { key: 'in_progress', label: 'قيد التنفيذ', description: 'بدأت العمل على الطلب' },
+                { key: 'ready_for_delivery', label: 'جاهز للتسليم', description: 'الطلب جاهز ويمكن تسليمه' },
+                { key: 'out_for_delivery', label: 'في الطريق', description: 'الطلب في طريقه للتسليم' },
+              ].map((status) => (
+                <Pressable
+                  key={status.key}
+                  onPress={() => handleStatusUpdate(status.key)}
+                  disabled={updatingStatus}
+                  style={styles.statusOption}
+                >
+                  <View style={styles.statusOptionContent}>
+                    <Text style={styles.statusOptionTitle}>{status.label}</Text>
+                    <Text style={styles.statusOptionDescription}>{status.description}</Text>
+                  </View>
+                  {updatingStatus ? (
+                    <ActivityIndicator size="small" color="#E0AAFF" />
+                  ) : (
+                    <Feather name="chevron-left" size={20} color="#E0AAFF" />
+                  )}
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.statusNote}>
+              ملاحظة: الحالة "مكتمل" تُحدث تلقائياً عند دفع الفاتورة من قبل العميل
+            </Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Image Picker Modal */}
+      <Modal
+        visible={showImagePickerModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowImagePickerModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.imagePickerModal}>
+            <View style={styles.imagePickerModalHeader}>
+              <Text style={styles.imagePickerModalTitle}>اختر صورة</Text>
+              <Pressable onPress={() => setShowImagePickerModal(false)} style={styles.closeButton}>
+                <Feather name="x" size={20} color="#9CA3AF" />
+              </Pressable>
+            </View>
+
+            <View style={styles.imagePickerOptions}>
+              <Pressable
+                onPress={() => handleImagePickerOption('gallery')}
+                style={styles.imagePickerOption}
+              >
+                <View style={styles.imagePickerOptionIcon}>
+                  <Feather name="image" size={24} color="#E0AAFF" />
+                </View>
+                <Text style={styles.imagePickerOptionText}>من المعرض</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => handleImagePickerOption('camera')}
+                style={styles.imagePickerOption}
+              >
+                <View style={styles.imagePickerOptionIcon}>
+                  <Feather name="camera" size={24} color="#E0AAFF" />
+                </View>
+                <Text style={styles.imagePickerOptionText}>الكاميرا</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };
@@ -754,6 +1048,29 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 6,
     marginHorizontal: 8,
+  },
+  imageMessageBubble: {
+    borderRadius: 28,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    maxWidth: 250,
+  },
+  messageImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 20,
+    resizeMode: 'cover',
+  },
+  imageCaption: {
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 20,
+    marginTop: 8,
+    paddingHorizontal: 4,
   },
   invoiceContainer: {
     minWidth: 220,
@@ -1494,5 +1811,141 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     textAlign: 'center',
+  },
+  statusButton: {
+    backgroundColor: 'rgba(30, 64, 175, 0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(30, 64, 175, 0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusButtonText: {
+    fontSize: 10,
+    color: '#1E40AF',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  statusModal: {
+    backgroundColor: 'white',
+    borderRadius: 32,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  statusModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  statusModalTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#1F2937',
+  },
+  statusModalSubtitle: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginBottom: 20,
+  },
+  statusOptions: {
+    gap: 12,
+    marginBottom: 20,
+  },
+  statusOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  statusOptionContent: {
+    flex: 1,
+  },
+  statusOptionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  statusOptionDescription: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  statusNote: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  closeButton: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  closeButtonText: {
+    fontSize: 10,
+    color: 'white',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  imagePickerModal: {
+    backgroundColor: 'white',
+    borderRadius: 32,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  imagePickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  imagePickerModalTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#1F2937',
+  },
+  imagePickerOptions: {
+    gap: 16,
+  },
+  imagePickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  imagePickerOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(224, 170, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  imagePickerOptionText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1F2937',
   },
 });

@@ -122,7 +122,7 @@ const AppContent: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<Screen>('welcome');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [authData, setAuthData] = useState<{ phone: string; otp?: string; token?: string } | null>(null);
-  const [orderData, setOrderData] = useState<{ description?: string; cityId?: number; deliveryDate?: Date } | null>(null);
+  const [orderData, setOrderData] = useState<{ description?: string; cityId?: number; deliveryDate?: Date; images?: (string | null)[] } | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [initialHomeTab, setInitialHomeTab] = useState<'home' | 'orders'>('home');
@@ -309,8 +309,8 @@ const AppContent: React.FC = () => {
         );
       case 'budget':
         return <BudgetScreen
-          onNext={(description, deliveryDate) => {
-            setOrderData({ description, deliveryDate });
+          onNext={(description, deliveryDate, images) => {
+            setOrderData({ description, deliveryDate, images });
             setCurrentScreen('citySelection');
           }}
           onBack={() => setCurrentScreen('home')}

@@ -74,6 +74,22 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
     from websocket_events import emit_invoice_created
     await emit_invoice_created(new_invoice.id, new_invoice.order_id)
 
+    # Send chat message about invoice creation
+    from websocket_events import emit_chat_message
+    await emit_chat_message(
+        conversation_id=None,  # Will be found by order
+        sender_id=current_user.id,
+        content=f"تم إنشاء فاتورة جديدة بمبلغ {new_invoice.full_amount:.2f} ريال",
+        message_type="invoice_created",
+        order_id=new_invoice.order_id,
+        invoice_data={
+            "id": new_invoice.id,
+            "invoice_id": new_invoice.invoice_id,
+            "full_amount": new_invoice.full_amount,
+            "description": new_invoice.description
+        }
+    )
+
     return new_invoice
 
 @router.post("/courier/create", response_model=InvoiceResponse)
@@ -173,6 +189,22 @@ async def update_invoice_by_courier(
 
     await db.commit()
     await db.refresh(invoice)
+
+    # Send chat message about invoice update
+    from websocket_events import emit_chat_message
+    await emit_chat_message(
+        conversation_id=None,  # Will be found by order
+        sender_id=current_user.id,
+        content=f"تم تحديث الفاتورة - المبلغ الجديد: {invoice.full_amount:.2f} ريال",
+        message_type="invoice_updated",
+        order_id=invoice.order_id,
+        invoice_data={
+            "id": invoice.id,
+            "invoice_id": invoice.invoice_id,
+            "full_amount": invoice.full_amount,
+            "description": invoice.description
+        }
+    )
 
     return invoice
 
