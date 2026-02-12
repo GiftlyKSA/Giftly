@@ -282,9 +282,23 @@ const AppContent: React.FC = () => {
         return <CompleteProfileScreen
           phone={authData?.phone || ''}
           otp={authData?.otp || ''}
-          onNext={(token) => {
-            login(token, authData?.phone || '');
-            setCurrentScreen('home');
+          onNext={async (token) => {
+            // Fetch user data and navigate based on role
+            try {
+              const { getUserDetails } = await import('./api');
+              const userData = await getUserDetails(token);
+              await login(token, authData?.phone || '');
+
+              if (userData.role === 'Courier') {
+                setCurrentScreen('courierHome');
+              } else {
+                setCurrentScreen('home');
+              }
+            } catch (error) {
+              console.error('Failed to fetch user data:', error);
+              // Fallback to home screen
+              setCurrentScreen('home');
+            }
           }}
         />;
       case 'home':
