@@ -11,9 +11,9 @@ from auth import get_password_hash
 from sqlalchemy import select
 
 async def create_admin(username="admin", password="admin123"):
-    # Validate password length (bcrypt limit is 72 characters)
-    if len(password) > 72:
-        print("Error: Password cannot be longer than 72 characters")
+    # Validate password length (bcrypt limit is 72 bytes)
+    if len(password.encode('utf-8')) > 72:
+        print("Error: Password cannot be longer than 72 bytes")
         return False
 
     async with AsyncSessionLocal() as db:

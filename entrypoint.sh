@@ -3,7 +3,6 @@
 # e.g., sleep 5 or use wait-for-it.sh
 
 # Run your initialization scripts
-python test_scripts_for_admin_dashboard/create_admin.py
 python test_scripts_for_admin_dashboard/add_cities.py
 
 # Start the FastAPI app
