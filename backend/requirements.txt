@@ -18,3 +18,4 @@ pytest==8.4.1                  # newest pytest patch in 8.x
 pytest-asyncio==0.26.0         # newer than 0.25.1
 httpx==0.28.1                # latest httpx series
 pydantic[email]==2.12.5        # matched pydantic version with email extra  [oai_citation:7‡PyPI](https://pypi.org/project/pydantic/?utm_source=chatgpt.com)
+bcrypt==3.2.2             # latest bcrypt (important for password hashing)  [oai_citation:8‡PyPI](https://pypi.org/project/bcrypt/?utm_source=chatgpt.com)
