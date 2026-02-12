@@ -180,7 +180,7 @@ export const LoginScreen: React.FC<Props> = ({ onNext }) => {
                 setPhoneError(''); // Clear any previous phone errors
               } catch (error: any) {
                 console.log('Failed to send OTP:', error);
-                setError(error.message || 'Failed to send OTP');
+                setPhoneError(error.message || 'Failed to send OTP');
               }
             }} style={styles.primaryButton}>
               <Text style={styles.primaryButtonText}>إرسال رمز التحقق</Text>

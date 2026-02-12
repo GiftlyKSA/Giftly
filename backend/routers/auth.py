@@ -61,28 +61,43 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
 
     user.otp = None  # Clear OTP
 
-    if user.is_verified:
-        # Existing user with complete profile, login
-        access_token, refresh_token = await create_tokens(db, user)
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-            "needs_profile": False
-        }
+    # Check if user is a courier
+    if user.role == 'Courier':
+        if user.is_verified:
+            # Verified courier, login
+            access_token, refresh_token = await create_tokens(db, user)
+            return {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "needs_profile": False
+            }
+        else:
+            # Unverified courier, show error
+            raise HTTPException(status_code=400, detail="حسابك لم يتم التحقق منه بعد")
     else:
-        # New user or user without complete profile, needs to complete profile
-        # Create temporary token for profile completion
-        temp_token = create_access_token(
-            data={"sub": user.phone_number, "temp": True},
-            expires_delta=timedelta(minutes=30)
-        )
-        return {
-            "access_token": temp_token,
-            "refresh_token": "",
-            "token_type": "bearer",
-            "needs_profile": True
-        }
+        # Customer or new user
+        if user.is_verified:
+            # Verified customer, login
+            access_token, refresh_token = await create_tokens(db, user)
+            return {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "needs_profile": False
+            }
+        else:
+            # Unverified customer/new user, needs to complete profile
+            temp_token = create_access_token(
+                data={"sub": user.phone_number, "temp": True},
+                expires_delta=timedelta(minutes=30)
+            )
+            return {
+                "access_token": temp_token,
+                "refresh_token": "",
+                "token_type": "bearer",
+                "needs_profile": True
+            }
 
 @router.get("/me", response_model=dict)
 async def read_current_user(current_user: User = Depends(get_current_user)):
