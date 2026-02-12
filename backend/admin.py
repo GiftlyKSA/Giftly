@@ -153,6 +153,8 @@ def authenticate_admin_request(request: Request) -> bool:
         db = SessionLocal()
         try:
             user = db.query(User).filter(User.admin_username == username, User.is_admin == True).first()
+            print(f"user is {user}") 
+            
             if not user:
                 return False
             return verify_password(password, user.admin_password_hash)
