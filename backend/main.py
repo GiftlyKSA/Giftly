@@ -260,6 +260,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
 from fastapi.staticfiles import StaticFiles
 import sqladmin
 
-app.mount("/static/sqladmin", StaticFiles(directory=sqladmin.static.__path__[0]), name="sqladmin_static")
-# Import event emission functions
+pkg_dir = os.path.dirname(sqladmin.__file__)
+static_dir = os.path.join(pkg_dir, "static")
+
+# Mount SQLAdmin static assets
+app.mount("/static/sqladmin", StaticFiles(directory=static_dir), name="sqladmin_static")# Import event emission functions
 from websocket_events import emit_order_status_change, emit_chat_message
