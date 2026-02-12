@@ -9,7 +9,7 @@ import { WebView } from 'react-native-webview';
 import { useAuth } from '../App';
 import { InvoiceResponse } from '../api';
 
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://https://306c-37-104-110-165.ngrok-free.app';
+const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://https://giftly-backend-tfjada.cranl.net';
 
 interface Props {
   onBack: () => void;

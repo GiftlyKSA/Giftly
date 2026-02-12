@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://306c-37-104-110-165.ngrok-free.app';
+export const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://giftly-backend-tfjada.cranl.net';
 
 export interface SendOTPRequest {
   phone_number: string;
