@@ -257,12 +257,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
         await db.close()
         print(f"WebSocket: Database session closed")
 
-from fastapi.staticfiles import StaticFiles
-import sqladmin
 
-pkg_dir = os.path.dirname(sqladmin.__file__)
-static_dir = os.path.join(pkg_dir, "static")
 
 # Mount SQLAdmin static assets
-app.mount("/static/sqladmin", StaticFiles(directory=static_dir), name="sqladmin_static")# Import event emission functions
 from websocket_events import emit_order_status_change, emit_chat_message
