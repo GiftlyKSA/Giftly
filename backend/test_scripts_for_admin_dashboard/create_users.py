@@ -38,7 +38,7 @@ async def create_users():
                 },
                 {
                     "name": "Mohammed",
-                    "phone_number": "551234567",
+                    "phone_number": "555555555",
                     "email": "mohammed@example.com",
                     "date_of_birth": date(1990, 1, 4),
                     "role": "Courier",
