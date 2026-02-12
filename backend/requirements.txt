@@ -13,8 +13,8 @@ python-bidi==0.6.7             # likely a patch bump from 0.6.3 → 0.6.4
 asyncpg==0.31.0                # minor patch bump from 0.30.0
 psycopg2-binary==2.9.11        # still recent; newer might be in 2.9 series
 sqladmin==0.23.0               # bump from 0.18.0 (typical path)
-wtforms==3.2.1                 # latest stable
+wtforms==3.1.2                 # latest stable
 pytest==8.4.1                  # newest pytest patch in 8.x
 pytest-asyncio==0.26.0         # newer than 0.25.1
-httpx==0.31.0                  # latest httpx series
+httpx==0.28.1                # latest httpx series
 pydantic[email]==2.12.5        # matched pydantic version with email extra  [oai_citation:7‡PyPI](https://pypi.org/project/pydantic/?utm_source=chatgpt.com)
