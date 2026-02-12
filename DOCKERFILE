@@ -16,7 +16,7 @@ RUN python test_scripts_for_admin_dashboard/create_admin.py
 RUN python test_scripts_for_admin_dashboard/add_cities.py
 
 # Expose port 80 for HTTP
-EXPOSE 80
+EXPOSE 8000
 
 # Run the application with uvicorn using HTTP
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
