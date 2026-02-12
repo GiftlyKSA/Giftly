@@ -35,6 +35,14 @@ async def create_users():
                     "email": "odai@example.com",
                     "date_of_birth": date(1990, 1, 3),
                     "role": "Customer"
+                },
+                {
+                    "name": "Mohammed",
+                    "phone_number": "551234567",
+                    "email": "mohammed@example.com",
+                    "date_of_birth": date(1990, 1, 4),
+                    "role": "Courier",
+                    
                 }
             ]
 
@@ -55,6 +63,8 @@ async def create_users():
                     role=user_data["role"],
                     is_verified=True
                 )
+                if user_data["role"] == "Courier":
+                    user.city_id = 1
                 db.add(user)
                 print(f"Created user {user_data['name']} with phone {user_data['phone_number']}")
 
