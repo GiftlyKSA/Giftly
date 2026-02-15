@@ -44,7 +44,9 @@ app.include_router(chat.router, prefix="/chat", tags=["chat"])
 app.include_router(wallets.router, prefix="/wallets", tags=["wallets"])
 app.include_router(payments.router, prefix="/payments", tags=["payments"])
 app.include_router(promocodes.router, prefix="/promocodes", tags=["promocodes"])
-
+@app.get("/test-scheme")
+async def test_scheme(request: Request):
+    return {"scheme": request.url.scheme, "url": str(request.url)}
 # Middleware for admin authentication
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
