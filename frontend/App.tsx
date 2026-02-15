@@ -38,7 +38,7 @@ interface AuthContextType {
   token: string | null;
   phone: string | null;
   userData: UserData | null;
-  login: (token: string, phone: string) => Promise<UserData | null>;
+  login: (token: string, phone: string) => Promise<UserData>;
   logout: () => void;
   fetchUserData: () => Promise<void>;
   updateToken: (newToken: string) => void;
@@ -62,11 +62,16 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const [userData, setUserData] = useState<UserData | null>(null);
   const [appStateResetCallback, setAppStateResetCallback] = useState<(() => void) | null>(null);
 
-  const login = async (newToken: string, newPhone: string): Promise<UserData | null> => {
+  const login = async (newToken: string, newPhone: string): Promise<UserData> => {
     setToken(newToken);
     setPhone(newPhone);
     // Fetch user data when logging in
     await fetchUserData(newToken);
+    // Wait a bit for state to update
+    await new Promise(resolve => setTimeout(resolve, 100));
+    if (!userData) {
+      throw new Error('Failed to fetch user data');
+    }
     return userData;
   };
 
@@ -134,14 +139,21 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
   // Join appropriate room when user data is available
   useEffect(() => {
-    if (token && userData) {
-      if (userData.role === 'Courier') {
-        webSocketService.joinRoom('couriers');
-      } else {
-        webSocketService.joinRoom(`user_${userData.id}`);
-      }
+    if (token && userData && userData.id) {
+      // Small delay to ensure this is the current session's userData
+      const timeoutId = setTimeout(() => {
+        if (userData.role === 'Courier') {
+          console.log('Joining couriers room for courier user');
+          webSocketService.joinRoom('couriers');
+        } else {
+          console.log('Joining user room for customer user:', `user_${userData.id}`);
+          webSocketService.joinRoom(`user_${userData.id}`);
+        }
+      }, 500); // Wait 500ms to ensure userData is stable
+
+      return () => clearTimeout(timeoutId);
     }
-  }, [token, userData]);
+  }, [token, userData?.id, userData?.role]); // More specific dependencies
 
   return (
     <AuthContext.Provider value={{ token, phone, userData, login, logout, fetchUserData, updateToken, setAppStateResetCallback }}>
@@ -308,6 +320,8 @@ const AppContent: React.FC = () => {
     const isCourier = userData?.role === 'Courier';
     const isCustomer = !isCourier;
 
+    console.log('renderScreen: currentScreen =', currentScreen, 'userRole =', userData?.role, 'isCourier =', isCourier, 'isCustomer =', isCustomer);
+
     // Define customer-only screens
     const customerScreens = ['home', 'budget', 'citySelection', 'userProfile', 'customerChat', 'searchingExpert'];
     // Define courier-only screens
@@ -367,24 +381,27 @@ const AppContent: React.FC = () => {
             setAuthData({ phone: result.phone, otp: result.otp });
             setCurrentScreen('profile');
           } else if (result.token) {
-            // Save refresh token and fetch user data
+            // Save refresh token and login user
             try {
               if (result.refreshToken) {
                 const { saveRefreshToken } = await import('./auth');
                 await saveRefreshToken(result.refreshToken);
               }
 
-              const { getUserDetails } = await import('./api');
-              const userData = await getUserDetails(result.token);
-              await login(result.token, result.phone);
+              // Login and get user data
+              const userData = await login(result.token, result.phone);
+              console.log('Login successful, userData:', userData);
 
+              // Route based on user role
               if (userData.role === 'Courier') {
+                console.log('Routing courier to courierHome');
                 setCurrentScreen('courierHome');
               } else {
+                console.log('Routing customer to home');
                 setCurrentScreen('home');
               }
             } catch (error) {
-              console.error('Failed to fetch user data:', error);
+              console.error('Failed to login user:', error);
               // Fallback to home screen
               setCurrentScreen('home');
             }
@@ -395,22 +412,25 @@ const AppContent: React.FC = () => {
           phone={authData?.phone || ''}
           otp={authData?.otp || ''}
           onNext={async (token, refreshToken) => {
-            // Save refresh token and fetch user data
+            // Save refresh token and login user
             try {
               const { saveRefreshToken } = await import('./auth');
               await saveRefreshToken(refreshToken);
 
-              const { getUserDetails } = await import('./api');
-              const userData = await getUserDetails(token);
-              await login(token, authData?.phone || '');
+              // Login and get user data
+              const userData = await login(token, authData?.phone || '');
+              console.log('Profile completion successful, userData:', userData);
 
+              // Route based on user role
               if (userData.role === 'Courier') {
+                console.log('Routing courier to courierHome after profile completion');
                 setCurrentScreen('courierHome');
               } else {
+                console.log('Routing customer to home after profile completion');
                 setCurrentScreen('home');
               }
             } catch (error) {
-              console.error('Failed to fetch user data:', error);
+              console.error('Failed to complete profile:', error);
               // Fallback to home screen
               setCurrentScreen('home');
             }

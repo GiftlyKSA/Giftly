@@ -376,13 +376,20 @@ export const refreshAccessToken = async (refreshToken: string): Promise<TokenRes
   return response.json();
 };
 
-export const logout = async (token: string): Promise<{message: string}> => {
+export const logout = async (accessToken: string): Promise<{message: string}> => {
+  // Get refresh token from storage
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    throw new Error('No refresh token found');
+  }
+
   const response = await fetch(`${API_BASE_URL}/auth/logout`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
+      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ refresh_token: refreshToken }),
   });
 
   if (!response.ok) {

@@ -80,8 +80,8 @@ class WebSocketService {
   disconnect() {
     // Leave all rooms before disconnecting
     if (this.ws?.readyState === WebSocket.OPEN) {
-      // Note: We don't explicitly leave rooms here as the backend handles cleanup
-      // when the connection closes
+      // Send leave_all_rooms message to backend
+      this.sendMessage({ action: 'leave_all_rooms' });
     }
 
     if (this.ws) {

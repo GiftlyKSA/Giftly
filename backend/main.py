@@ -216,6 +216,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                     print(f"WebSocket: User {user.id} left room {room}")
                     await manager.send_to_user(user.id, {"action": "left_room", "room": room})
 
+            elif action == "leave_all_rooms":
+                # Remove user from all rooms (handled by manager.disconnect)
+                manager.disconnect(user.id)
+                print(f"WebSocket: User {user.id} left all rooms")
+                await manager.send_to_user(user.id, {"action": "left_all_rooms"})
+
             elif action == "send_message":
                 room = data.get("room")
                 message_content = data.get("content")
