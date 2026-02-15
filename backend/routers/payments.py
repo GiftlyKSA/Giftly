@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -156,6 +156,7 @@ async def get_my_payments(current_user=Depends(get_current_user), db: AsyncSessi
 async def pay_with_wallet(
     invoice_id: int,
     coupon_code: str = None,
+    background_tasks: BackgroundTasks = None,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -306,6 +307,11 @@ async def pay_with_wallet(
         # Emit order status change event
         from websocket_events import emit_order_status_change
         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
+
+        # Send invoice email in background (now that payment is successful)
+        if background_tasks:
+            from utils.background_email import send_invoice_email_background
+            background_tasks.add_task(send_invoice_email_background, invoice.id, db)
 
         return {
             "message": f"Payment successful{f'. Discount applied: {discount_amount:.2f} SAR' if coupon_used else ''}",

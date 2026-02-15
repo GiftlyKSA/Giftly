@@ -1,6 +1,6 @@
 import re
 from datetime import datetime, timedelta, date
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -182,7 +182,7 @@ async def refresh_access_token(refresh_request: RefreshTokenRequest, db: AsyncSe
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 @router.post("/complete-profile", response_model=Token)
-async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db)):
+async def complete_profile(profile_data: dict, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Complete profile for new users after OTP verification"""
     # Extract data from request
     phone_number = profile_data.get("phone_number")
@@ -231,6 +231,10 @@ async def complete_profile(profile_data: dict, db: AsyncSession = Depends(get_db
 
     # Create and store permanent tokens
     access_token, refresh_token = await create_tokens(db, user)
+
+    # Send welcome email in background
+    from utils.background_email import send_welcome_email_background
+    background_tasks.add_task(send_welcome_email_background, user.id, db)
 
     return {
         "access_token": access_token,

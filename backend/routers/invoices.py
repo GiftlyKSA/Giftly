@@ -99,6 +99,7 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
 @router.post("/courier/create", response_model=InvoiceResponse)
 async def create_invoice_by_courier(
     invoice_data: CreateInvoice,
+    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
