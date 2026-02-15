@@ -262,6 +262,60 @@ const AppContent: React.FC = () => {
   };
 
   const renderScreen = () => {
+    // Role-based screen access control
+    const isCourier = userData?.role === 'Courier';
+    const isCustomer = !isCourier;
+
+    // Define customer-only screens
+    const customerScreens = ['home', 'budget', 'citySelection', 'userProfile', 'customerChat', 'searchingExpert'];
+    // Define courier-only screens
+    const courierScreens = ['courierHome', 'courierChat', 'courierLogin'];
+    // Define shared screens (accessible by both)
+    const sharedScreens = ['welcome', 'login', 'profile', 'invoice'];
+
+    // Check if current screen is accessible by current user role
+    if (customerScreens.includes(currentScreen) && isCourier) {
+      // Courier trying to access customer screen - redirect to courier home
+      console.warn('Courier attempting to access customer screen, redirecting to courierHome');
+      setCurrentScreen('courierHome');
+      return <CourierHomeScreen
+        onLogout={() => setCurrentScreen('welcome')}
+        onAcceptOrder={() => {}}
+        onNavigateToChat={(orderId) => {
+          setSelectedCourierOrderId(orderId);
+          setCurrentScreen('courierChat');
+        }}
+        isDarkMode={isDarkMode}
+        toggleDarkMode={toggleDarkMode}
+        theme={theme}
+      />;
+    }
+
+    if (courierScreens.includes(currentScreen) && isCustomer) {
+      // Customer trying to access courier screen - redirect to customer home
+      console.warn('Customer attempting to access courier screen, redirecting to home');
+      setCurrentScreen('home');
+      return (
+        <HomeScreen
+          onNavigateProfile={() => setCurrentScreen('userProfile')}
+          onNavigateCourier={() => setCurrentScreen('courierChat')}
+          onStartOrder={() => setCurrentScreen('budget')}
+          onShowInvoice={(invoiceId) => {
+            setPreviousScreen('home');
+            setCurrentOrderId(invoiceId);
+            setCurrentScreen('invoice');
+          }}
+          onNavigateToOrderChat={(orderId) => {
+            setSelectedOrderId(orderId);
+            setCurrentScreen('customerChat');
+          }}
+          initialTab={initialHomeTab}
+          ordersData={ordersData}
+          onOrdersDataChange={setOrdersData}
+        />
+      );
+    }
+
     switch (currentScreen) {
       case 'welcome':
         return <WelcomeScreen onStart={() => setCurrentScreen('login')} />;

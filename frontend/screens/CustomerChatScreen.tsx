@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Message, ChatMessage } from '../types';
 import { useAuth } from '../App';
-import { cancelOrder, getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, getConversationByOrder, Conversation } from '../api';
+import { cancelOrder, getOrder, OrderResponse, getConversationMessages, sendMessage, createOrGetConversation, getConversationByOrder, Conversation, API_BASE_URL } from '../api';
 import { webSocketService } from '../WebSocketService';
 
 interface Props {
@@ -691,9 +691,9 @@ export const CustomerChatScreen: React.FC<Props> = ({ onBack, orderId, onShowInv
           <Pressable onPress={() => {
             console.log(`you have clicked on invoice number ${order.invoice.invoice_id} for order id ${order.id}`);
             onShowInvoice(order.invoice.invoice_id);
-          }} style={styles.invoiceButtonBottom}>
+          }} style={styles.invoiceButtonTop}>
             <Feather name="file-text" size={16} color="#E0AAFF" />
-            <Text style={styles.invoiceButtonTextBottom}>عرض الفاتورة</Text>
+            <Text style={styles.invoiceButtonTextTop}>عرض الفاتورة</Text>
           </Pressable>
         )}
         <View style={styles.inputContainer}>
@@ -1011,6 +1011,24 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   invoiceButtonTextBottom: {
+    fontSize: 12,
+    color: '#E0AAFF',
+    fontWeight: 'bold',
+  },
+  invoiceButtonTop: {
+    backgroundColor: 'rgba(224, 170, 255, 0.1)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(224, 170, 255, 0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    alignSelf: 'center',
+  },
+  invoiceButtonTextTop: {
     fontSize: 12,
     color: '#E0AAFF',
     fontWeight: 'bold',
