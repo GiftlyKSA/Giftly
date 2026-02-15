@@ -91,7 +91,7 @@ class ForceHTTPSMiddleware(BaseHTTPMiddleware):
         request.scope["scheme"] = "https"
         return await call_next(request)
     
-sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard", middlewares=[ForceHTTPSMiddleware()])
+sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard", middlewares=[ForceHTTPSMiddleware], base_url="https://giftly-backend-tfjada.cranl.net/admin") 
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
 sqladmin.add_view(OrderAdmin)
