@@ -28,17 +28,7 @@ app = FastAPI(lifespan=lifespan)
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
-class RewriteSQLAdminHTTPS(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        if response.headers.get("content-type", "").startswith("text/html"):
-            body = (await response.body()).decode()
-            body = body.replace("http://giftly-backend-tfjada.cranl.net", 
-                                "https://giftly-backend-tfjada.cranl.net")
-            response.body_iterator = iter([body.encode()])
-        return response
 
-app.add_middleware(RewriteSQLAdminHTTPS)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(orders.router, prefix="/orders", tags=["orders"])
@@ -48,9 +38,7 @@ app.include_router(chat.router, prefix="/chat", tags=["chat"])
 app.include_router(wallets.router, prefix="/wallets", tags=["wallets"])
 app.include_router(payments.router, prefix="/payments", tags=["payments"])
 app.include_router(promocodes.router, prefix="/promocodes", tags=["promocodes"])
-@app.get("/test-scheme")
-async def test_scheme(request: Request):
-    return {"scheme": request.url.scheme, "url": str(request.url)}
+
 # Middleware for admin authentication
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
@@ -96,14 +84,18 @@ async def admin_auth_middleware(request: Request, call_next):
 # Metadata reflection removed for async engine compatibility
 
 # Create and mount SQLAdmin
-from starlette.middleware.base import BaseHTTPMiddleware
-class ForceHTTPSMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        # Force the request scheme to https for SQLAdmin
-        request.scope["scheme"] = "https"
-        return await call_next(request)
+from starlette.datastructures import URL
+def https_url_for(context, name: str, **path_params):
+    request: Request = context["request"]
+    url: URL = request.url_for(name, **path_params)
+    return str(url.replace(scheme="https"))
     
-sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard", middlewares=[ForceHTTPSMiddleware], base_url="https://giftly-backend-tfjada.cranl.net/admin") 
+sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard")
+admin.templates.env.globals["url_for"] = https_url_for
+@app.get("/test-scheme")
+async def test_scheme(request: Request):
+    return {"scheme": request.url.scheme, "url": str(request.url), "https_url_for": admin.templates.env}
+
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
 sqladmin.add_view(OrderAdmin)
