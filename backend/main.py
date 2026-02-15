@@ -25,7 +25,16 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+from starlette.middleware.base import BaseHTTPMiddleware
 
+class ForceHTTPSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Force FastAPI to believe scheme is https
+        request.scope["scheme"] = "https"
+        response = await call_next(request)
+        return response
+
+app.add_middleware(ForceHTTPSMiddleware)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(orders.router, prefix="/orders", tags=["orders"])
