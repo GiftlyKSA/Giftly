@@ -59,7 +59,7 @@ class OrderAdmin(ModelView, model=Order):
 class InvoiceAdmin(ModelView, model=Invoice):
     column_list = [Invoice.id, Invoice.invoice_id, Invoice.order, Invoice.full_amount, Invoice.service_fee, Invoice.order_only_price, Invoice.courier_fee, Invoice.status, Invoice.description, Invoice.comment, Invoice.sent_to_user_via_email, Invoice.sent_at, Invoice.due_date, Invoice.tax_amount, Invoice.discount_amount, Invoice.promocode, Invoice.created_at, Invoice.updated_at]
     column_searchable_list = [Invoice.invoice_id]
-    column_filters = [Invoice.status, Invoice.sent_to_user_via_email]
+    #column_filters = [Invoice.status, Invoice.sent_to_user_via_email]
     form_excluded_columns = [Invoice.created_at, Invoice.updated_at]
 
     column_choices = {
