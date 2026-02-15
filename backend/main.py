@@ -90,7 +90,7 @@ def https_url_for(context, name: str, **path_params):
     url: URL = request.url_for(name, **path_params)
     return str(url.replace(scheme="https"))
     
-sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard")
+sqladmin = Admin(app, engine, title="Admin Dashboard")
 admin.templates.env.globals["url_for"] = https_url_for
 @app.get("/test-scheme")
 async def test_scheme(request: Request):
