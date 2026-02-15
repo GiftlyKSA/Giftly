@@ -84,6 +84,20 @@ async def admin_auth_middleware(request: Request, call_next):
 # Metadata reflection removed for async engine compatibility
 
 # Create and mount SQLAdmin
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import URL
+
+class ForceHTTPSBaseURL(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Force scheme to HTTPS
+        request.scope["scheme"] = "https"
+        # Also force base_url to HTTPS
+        request._base_url = URL(str(request.base_url).replace("http://", "https://"))
+        response = await call_next(request)
+        return response
+
+app.add_middleware(ForceHTTPSBaseURL)
+
 from starlette.datastructures import URL
 def https_url_for(context, name: str, **path_params):
     request: Request = context["request"]
@@ -91,10 +105,10 @@ def https_url_for(context, name: str, **path_params):
     return str(url.replace(scheme="https"))
     
 sqladmin = Admin(app, engine, title="Admin Dashboard")
-sqladmin.templates.env.globals["url_for"] = https_url_for
+#qladmin.templates.env.globals["url_for"] = https_url_for
 @app.get("/test-scheme")
 async def test_scheme(request: Request):
-    return {"schemee": request.url.scheme, "url": str(request.url), "https_url_for": sqladmin.templates.env.globals}
+    return {"schemee": request.url.scheme, "url": str(request.url)}
 
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
