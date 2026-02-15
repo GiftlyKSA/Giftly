@@ -92,7 +92,7 @@ async def admin_auth_middleware(request: Request, call_next):
 # Metadata reflection removed for async engine compatibility
 
 # Create and mount SQLAdmin
-sqladmin = Admin(app, engine, title="Admin Dashboard")
+sqladmin = Admin(app, engine, title="Admin Dashboard", base_url="/")
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
 sqladmin.add_view(OrderAdmin)
