@@ -42,6 +42,7 @@ interface AuthContextType {
   logout: () => void;
   fetchUserData: () => Promise<void>;
   updateToken: (newToken: string) => void;
+  setAppStateResetCallback: (callback: () => void) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -59,6 +60,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const [token, setToken] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
+  const [appStateResetCallback, setAppStateResetCallback] = useState<(() => void) | null>(null);
 
   const login = async (newToken: string, newPhone: string): Promise<UserData | null> => {
     setToken(newToken);
@@ -72,8 +74,27 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     setToken(newToken);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      // Call backend logout API to revoke refresh token
+      if (token) {
+        const { logout: logoutAPI } = await import('./api');
+        await logoutAPI(token);
+      }
+    } catch (error) {
+      console.error('Error calling logout API:', error);
+      // Continue with frontend cleanup even if API call fails
+    }
+
+    // Call the app state reset callback to clear all screen states
+    if (appStateResetCallback) {
+      appStateResetCallback();
+    }
+
+    // Disconnect WebSocket and clear all connections
     webSocketService.disconnect();
+
+    // Clear all auth data
     setToken(null);
     setPhone(null);
     setUserData(null);
@@ -123,7 +144,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   }, [token, userData]);
 
   return (
-    <AuthContext.Provider value={{ token, phone, userData, login, logout, fetchUserData, updateToken }}>
+    <AuthContext.Provider value={{ token, phone, userData, login, logout, fetchUserData, updateToken, setAppStateResetCallback }}>
       {children}
     </AuthContext.Provider>
   );
@@ -155,7 +176,28 @@ const AppContent: React.FC = () => {
   }>({});
   const [selectedCourierOrderId, setSelectedCourierOrderId] = useState<string | null>(null);
   const [ordersData, setOrdersData] = useState<any[]>([]);
-  const { login, token, userData } = useAuth();
+  const { login, token, userData, logout, setAppStateResetCallback } = useAuth();
+
+  // Reset all app states function
+  const resetAllAppStates = useCallback(() => {
+    setCurrentScreen('welcome');
+    setIsDarkMode(false);
+    setAuthData(null);
+    setOrderData(null);
+    setSelectedOrderId(null);
+    setCurrentOrderId(null);
+    setInitialHomeTab('home');
+    setPreviousScreen('home');
+    setChatStates({});
+    setCourierChatStates({});
+    setSelectedCourierOrderId(null);
+    setOrdersData([]);
+  }, []);
+
+  // Set the reset callback in auth context
+  useEffect(() => {
+    setAppStateResetCallback(resetAllAppStates);
+  }, [setAppStateResetCallback, resetAllAppStates]);
 
   // Handle WebSocket events
   useEffect(() => {
@@ -414,7 +456,7 @@ const AppContent: React.FC = () => {
       case 'userProfile':
         return <ProfileScreen
           onBack={() => setCurrentScreen('home')}
-          onLogout={() => setCurrentScreen('welcome')}
+          onLogout={logout}
           onNavigateHome={() => setCurrentScreen('home')}
           onNavigateOrders={() => setCurrentScreen('home')} // Navigate to home with orders tab
           onNavigateCourier={() => setCurrentScreen('courierChat')}
@@ -488,7 +530,7 @@ const AppContent: React.FC = () => {
         return <CourierLoginScreen onNext={() => setCurrentScreen('courierHome')} onBack={() => setCurrentScreen('login')} />;
       case 'courierHome':
         return <CourierHomeScreen
-          onLogout={() => setCurrentScreen('welcome')}
+          onLogout={logout}
           onAcceptOrder={() => {}}
           onNavigateToChat={(orderId) => {
             setSelectedCourierOrderId(orderId);

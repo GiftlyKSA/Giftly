@@ -78,12 +78,19 @@ class WebSocketService {
   }
 
   disconnect() {
+    // Leave all rooms before disconnecting
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      // Note: We don't explicitly leave rooms here as the backend handles cleanup
+      // when the connection closes
+    }
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
     this.token = null;
     this.reconnectAttempts = 0;
+    this.eventListeners = {}; // Clear all event listeners
   }
 
   private handleReconnect() {

@@ -245,8 +245,13 @@ async def complete_profile(profile_data: dict, background_tasks: BackgroundTasks
 
 @router.post("/logout")
 async def logout(refresh_request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
-    """Logout by revoking the provided refresh token"""
-    _, rt = await validate_refresh_token(db, refresh_request.refresh_token)
+    """Logout by revoking the provided refresh token and cleaning up WebSocket connections"""
+    user_id, rt = await validate_refresh_token(db, refresh_request.refresh_token)
     rt.revoked = True
     await db.commit()
+
+    # Clean up WebSocket connections for this user
+    from websocket_manager import manager
+    manager.disconnect(user_id)
+
     return {"message": "Successfully logged out"}
