@@ -26,7 +26,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+from starlette.middleware.base import BaseHTTPMiddleware
 
+class RewriteSQLAdminHTTPS(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if response.headers.get("content-type", "").startswith("text/html"):
+            body = (await response.body()).decode()
+            body = body.replace("http://giftly-backend-tfjada.cranl.net", 
+                                "https://giftly-backend-tfjada.cranl.net")
+            response.body_iterator = iter([body.encode()])
+        return response
+
+app.add_middleware(RewriteSQLAdminHTTPS)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(orders.router, prefix="/orders", tags=["orders"])
