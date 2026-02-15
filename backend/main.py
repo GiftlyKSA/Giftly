@@ -94,7 +94,7 @@ sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard")
 admin.templates.env.globals["url_for"] = https_url_for
 @app.get("/test-scheme")
 async def test_scheme(request: Request):
-    return {"scheme": request.url.scheme, "url": str(request.url), "https_url_for": admin.templates.env}
+    return {"schemee": request.url.scheme, "url": str(request.url), "https_url_for": admin.templates.env}
 
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
