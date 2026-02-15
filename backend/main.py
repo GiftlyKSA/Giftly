@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocke
 from database import engine, Base, AsyncSessionLocal
 from routers import auth, admin, orders, cities, invoices, chat, wallets, payments, promocodes
 from sqladmin import Admin
-from admin import UserAdmin, CityAdmin, OrderAdmin, InvoiceAdmin, ConversationAdmin, MessageAdmin, WalletAdmin, PaymentAdmin, PromocodeAdmin
+from admin import UserAdmin, CityAdmin, OrderAdmin, InvoiceAdmin, ConversationAdmin, MessageAdmin, WalletAdmin, PaymentAdmin, PromocodeAdmin, ReviewAdmin
 import base64
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +91,7 @@ sqladmin.add_view(PaymentAdmin)
 sqladmin.add_view(PromocodeAdmin)
 sqladmin.add_view(ConversationAdmin)
 sqladmin.add_view(MessageAdmin)
+sqladmin.add_view(ReviewAdmin)
 
 @app.get("/")
 def read_root():

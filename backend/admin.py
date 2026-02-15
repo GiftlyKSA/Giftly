@@ -1,6 +1,6 @@
 from sqladmin import Admin, ModelView
 from database import engine
-from models import User, City, Order, Invoice, Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus, Promocode
+from models import User, City, Order, Invoice, Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus, Promocode, Review
 from auth import verify_password
 from sqlalchemy.orm import Session
 from database import AsyncSessionLocal as SessionLocal
@@ -137,6 +137,23 @@ class PromocodeAdmin(ModelView, model=Promocode):
             'order_total': 'Order Total',
             'delivery_fee': 'Delivery Fee',
             'service_fee': 'Service Fee'
+        }
+    }
+
+class ReviewAdmin(ModelView, model=Review):
+    column_list = [Review.id, Review.reviewer, Review.reviewed_user, Review.rate, Review.comment, Review.created_at]
+    column_searchable_list = [Review.comment]
+    column_filters = [Review.rate, Review.reviewer, Review.reviewed_user]
+    form_excluded_columns = [Review.created_at]
+
+    column_choices = {
+        Review.rate: {
+            0: '0 Stars',
+            1: '1 Star',
+            2: '2 Stars',
+            3: '3 Stars',
+            4: '4 Stars',
+            5: '5 Stars'
         }
     }
 

@@ -361,3 +361,23 @@ class DepositRequest(Base):
         Index('idx_deposit_request_courier', 'courier_id', 'created_at'),
         Index('idx_deposit_request_status', 'status', 'created_at'),
     )
+
+class Review(Base):
+    __tablename__ = "reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # Customer who left the review
+    reviewed = Column(Integer, ForeignKey("users.id"), nullable=False)  # Courier being reviewed
+    rate = Column(Integer, nullable=False)  # Rating from 0 to 5
+    comment = Column(Text, nullable=True)  # Optional comment
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), nullable=False)
+
+    # Relationships
+    reviewer = relationship("User", foreign_keys=[reviewed_by], backref="reviews_given")
+    reviewed_user = relationship("User", foreign_keys=[reviewed], backref="reviews_received")
+
+    __table_args__ = (
+        Index('idx_review_reviewer', 'reviewed_by', 'created_at'),
+        Index('idx_review_reviewed', 'reviewed', 'created_at'),
+        Index('idx_review_rate', 'rate'),
+    )
