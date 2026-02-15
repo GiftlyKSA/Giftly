@@ -9,4 +9,4 @@ python test_scripts_for_admin_dashboard/check_and_create_admin.
 python test_scripts_for_admin_dashboard/add_reviews_table.py
 
 # Start the FastAPI app
-exec uvicorn main:app --host 0.0.0.0 --port 3000 --proxy-headers --forwarded-allow-ips="*"
+exec uvicorn main:app --host 0.0.0.0 --port 3000 --forwarded-allow-ips='*' --proxy-headers
