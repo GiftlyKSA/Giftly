@@ -25,16 +25,8 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
-from starlette.middleware.base import BaseHTTPMiddleware
 
-class ForceHTTPSMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        # Force FastAPI to believe scheme is https
-        request.scope["scheme"] = "https"
-        response = await call_next(request)
-        return response
 
-app.add_middleware(ForceHTTPSMiddleware)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(orders.router, prefix="/orders", tags=["orders"])
@@ -92,7 +84,14 @@ async def admin_auth_middleware(request: Request, call_next):
 # Metadata reflection removed for async engine compatibility
 
 # Create and mount SQLAdmin
-sqladmin = Admin(app, engine, title="Admin Dashboard", base_url="/")
+from starlette.middleware.base import BaseHTTPMiddleware
+class ForceHTTPSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Force the request scheme to https for SQLAdmin
+        request.scope["scheme"] = "https"
+        return await call_next(request)
+    
+sqladmin = Admin(app, engine, title="Admin Dashboard", title="Admin Dashboard", middlewares=[ForceHTTPSMiddleware()])
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(CityAdmin)
 sqladmin.add_view(OrderAdmin)
