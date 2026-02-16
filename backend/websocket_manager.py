@@ -17,10 +17,13 @@ class ConnectionManager:
         if user_id in self.active_connections:
             del self.active_connections[user_id]
         # Remove user from all rooms
+        rooms_to_delete = []
         for room in self.rooms:
             self.rooms[room].discard(user_id)
             if not self.rooms[room]:
-                del self.rooms[room]
+                rooms_to_delete.append(room)
+        for room in rooms_to_delete:
+            del self.rooms[room]
 
     async def join_room(self, user_id: int, room: str):
         if room not in self.rooms:
@@ -52,10 +55,13 @@ class ConnectionManager:
                 # Connection might be closed, remove it
                 del self.active_connections[user_id]
                 # Remove from rooms
+                rooms_to_delete = []
                 for room in self.rooms:
                     self.rooms[room].discard(user_id)
                     if not self.rooms[room]:
-                        del self.rooms[room]
+                        rooms_to_delete.append(room)
+                for room in rooms_to_delete:
+                    del self.rooms[room]
 
 
 # Global instance

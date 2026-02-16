@@ -4,7 +4,7 @@ import requests
 HOST = "https://giftly-backend-tfjada.cranl.net"
 
 # Phone number for testing (replace with actual phone number)
-PHONE_NUMBER = "+966559644339"  # Example Saudi phone number (must start with 5)
+PHONE_NUMBER = "+966555555556"  # Example Saudi phone number (must start with 5)
 
 def send_otp(phone_number):
     url = f"{HOST}/auth/send-otp"
