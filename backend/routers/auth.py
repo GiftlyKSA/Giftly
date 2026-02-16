@@ -101,7 +101,14 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me", response_model=dict)
 async def read_current_user(current_user: User = Depends(get_current_user)):
-    return {
+    from fastapi import Response
+    # Prevent caching
+    response = Response()
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    # Return user data
+    data = {
         "id": current_user.id,
         "phone_number": current_user.phone_number,
         "email": current_user.email,
@@ -112,6 +119,7 @@ async def read_current_user(current_user: User = Depends(get_current_user)):
         "is_verified": current_user.is_verified,
         "role": current_user.role
     }
+    return data
 
 @router.put("/me", response_model=dict)
 async def update_current_user(user_update: UpdateUserProfile, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
