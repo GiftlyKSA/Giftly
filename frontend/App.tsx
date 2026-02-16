@@ -65,14 +65,19 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const login = async (newToken: string, newPhone: string): Promise<UserData> => {
     setToken(newToken);
     setPhone(newPhone);
-    // Fetch user data when logging in
-    await fetchUserData(newToken);
-    // Wait a bit for state to update
-    await new Promise(resolve => setTimeout(resolve, 100));
-    if (!userData) {
-      throw new Error('Failed to fetch user data');
+
+    // Fetch user data directly from API instead of relying on state
+    try {
+      const { getUserDetails } = await import('./api');
+      const userData = await getUserDetails(newToken);
+      console.log('API returned userData:', JSON.stringify(userData));
+      setUserData(userData); // Also update the state
+      console.log('Set userData state to:', JSON.stringify(userData));
+      return userData;
+    } catch (error) {
+      console.error('Failed to fetch user data in login:', error);
+      throw error;
     }
-    return userData;
   };
 
   const updateToken = (newToken: string) => {
@@ -320,7 +325,7 @@ const AppContent: React.FC = () => {
     const isCourier = userData?.role === 'Courier';
     const isCustomer = !isCourier;
 
-    console.log('renderScreen: currentScreen =', currentScreen, 'userRole =', userData?.role, 'isCourier =', isCourier, 'isCustomer =', isCustomer);
+    console.log('renderScreen: currentScreen =', currentScreen, 'userData =', JSON.stringify(userData), 'userRole =', userData?.role, 'isCourier =', isCourier, 'isCustomer =', isCustomer);
 
     // Define customer-only screens
     const customerScreens = ['home', 'budget', 'citySelection', 'userProfile', 'customerChat', 'searchingExpert'];
@@ -377,34 +382,54 @@ const AppContent: React.FC = () => {
         return <WelcomeScreen onStart={() => setCurrentScreen('login')} />;
       case 'login':
         return <LoginScreen onNext={async (result) => {
+          console.log('🔐 LOGIN PROCESS STARTED');
+          console.log('Login result:', { needsProfile: result.needsProfile, hasToken: !!result.token, hasRefreshToken: !!result.refreshToken });
+
           if (result.needsProfile) {
+            console.log('📝 User needs to complete profile');
             setAuthData({ phone: result.phone, otp: result.otp });
             setCurrentScreen('profile');
           } else if (result.token) {
+            console.log('✅ User has token, proceeding with login...');
+
             // Save refresh token and login user
             try {
               if (result.refreshToken) {
+                console.log('💾 Saving refresh token...');
                 const { saveRefreshToken } = await import('./auth');
                 await saveRefreshToken(result.refreshToken);
+                console.log('✅ Refresh token saved');
               }
 
+              console.log('🔍 Calling login function...');
               // Login and get user data
               const userData = await login(result.token, result.phone);
-              console.log('Login successful, userData:', userData);
+              console.log('🎉 Login successful, userData:', userData);
+              console.log('👤 User role from API:', userData.role);
+              console.log('🆔 User ID:', userData.id);
+              console.log('📞 User phone:', userData.phone_number);
 
               // Route based on user role
               if (userData.role === 'Courier') {
-                console.log('Routing courier to courierHome');
+                console.log('🚚 Routing COURIER to courierHome screen');
                 setCurrentScreen('courierHome');
+                console.log('✅ Screen set to: courierHome');
               } else {
-                console.log('Routing customer to home');
+                console.log('👤 Routing CUSTOMER to home screen');
                 setCurrentScreen('home');
+                console.log('✅ Screen set to: home');
               }
+
+              console.log('🎯 LOGIN PROCESS COMPLETED SUCCESSFULLY');
+
             } catch (error) {
-              console.error('Failed to login user:', error);
+              console.error('❌ Failed to login user:', error);
               // Fallback to home screen
               setCurrentScreen('home');
+              console.log('⚠️ Fallback: Screen set to home due to error');
             }
+          } else {
+            console.log('❓ No token or profile needed - unexpected state');
           }
         }} />;
       case 'profile':
