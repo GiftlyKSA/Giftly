@@ -81,7 +81,10 @@ def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
 
 async def get_user_by_phone(db: AsyncSession, phone_number: str):
-    result = await db.execute(select(User).where(User.phone_number == phone_number))
+    # Normalize phone number
+    import re
+    clean_phone = re.sub(r'^(\+966|0)+', '', phone_number)
+    result = await db.execute(select(User).where(User.phone_number == clean_phone))
     return result.scalar_one_or_none()
 
 async def get_current_user(token: str = Depends(security)) -> User:
