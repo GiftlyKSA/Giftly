@@ -87,7 +87,7 @@ async def get_user_by_phone(db: AsyncSession, phone_number: str):
     result = await db.execute(select(User).where(User.phone_number == clean_phone))
     return result.scalar_one_or_none()
 
-async def get_current_user(token: str = Depends(security)) -> User:
+async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(security)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -109,7 +109,6 @@ async def get_current_user(token: str = Depends(security)) -> User:
     except (JWTError, ValueError):
         raise credentials_exception
     # Query the database for the current user
-    db = await get_db()
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
