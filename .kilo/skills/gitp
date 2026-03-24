@@ -1,5 +1,24 @@
 #!/bin/bash
 BRANCH=${1:-$(git rev-parse --abbrev-ref HEAD)}
 git add .
-git commit -m "message for the changes"
+
+# Generate commit message based on changes
+FILES_CHANGED=$(git diff --cached --name-only | wc -l)
+if [ "$FILES_CHANGED" -eq 0 ]; then
+    COMMIT_MSG="No changes to commit"
+else
+    # Get summary of changes
+    ADDED=$(git diff --cached --name-only --diff-filter=A | wc -l)
+    MODIFIED=$(git diff --cached --name-only --diff-filter=M | wc -l)
+    DELETED=$(git diff --cached --name-only --diff-filter=D | wc -l)
+    
+    PARTS=()
+    [ "$ADDED" -gt 0 ] && PARTS+=("$ADDED added")
+    [ "$MODIFIED" -gt 0 ] && PARTS+=("$MODIFIED modified")
+    [ "$DELETED" -gt 0 ] && PARTS+=("$DELETED deleted")
+    
+    COMMIT_MSG="Update: $(IFS=', '; echo "${PARTS[*]}")"
+fi
+
+git commit -m "$COMMIT_MSG"
 git push origin "$BRANCH"
