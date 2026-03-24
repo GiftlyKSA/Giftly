@@ -1,280 +1,297 @@
-import pytest
+"""
+Shared fixtures for the test suite.
+
+Database: async SQLite (aiosqlite) in-memory — no real PostgreSQL needed.
+HTTP client: httpx AsyncClient.
+External services (SMS, Paylink, S3) are mocked.
+"""
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__) + '/..')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from sqlalchemy import create_engine
-from database import Base
-from models import User, City, Order, Invoice, Conversation, Message, Wallet, Payment, Promocode, DepositRequest, CourierBalanceAddition, JWTToken
-from datetime import datetime, timedelta, date
-import uuid
+import pytest
+import pytest_asyncio
+from datetime import date, datetime, timezone, timedelta
+from typing import AsyncGenerator
 
-# Test database URL - using SQLite in-memory for tests
-TEST_DATABASE_URL = "sqlite:///:memory:"
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.pool import StaticPool
 
-# Removed event_loop fixture since we're using sync fixtures
+# ── must set env vars BEFORE importing app modules ──────────────────────────
+os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long!!")
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+os.environ.setdefault("REFRESH_TOKEN_EXPIRE_DAYS", "7")
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+os.environ.setdefault("AWS_S3_BUCKET_NAME", "test-bucket")
+os.environ.setdefault("AWS_REGION", "us-east-1")
+os.environ.setdefault("SMS_PROVIDER_ENABLED", "false")
+os.environ.setdefault("PAYLINK_API_KEY", "")
+os.environ.setdefault("PAYLINK_TEST_MODE", "true")
+os.environ.setdefault("PAYLINK_CALLBACK_URL", "http://localhost/payments/paylink-callback")
+os.environ.setdefault("PAYLINK_RETURN_URL", "http://localhost/return")
 
-@pytest.fixture(scope="session")
-def test_engine():
-    """Create test database engine."""
-    # Use synchronous approach for simplicity
-    from sqlalchemy import create_engine
-    engine = create_engine(TEST_DATABASE_URL, echo=False)
-    Base.metadata.create_all(bind=engine)
-    yield engine
-    engine.dispose()
+from database import Base, get_db
+from models import (
+    User, City, Order, OrderStatus, Invoice, InvoiceStatus,
+    Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus,
+    Promocode, PromocodeUsage, CourierProfile, CustomerProfile, RefreshToken,
+    ImportantEvent,
+)
+from enums import UserRole, ConversationStatus
+from auth import get_password_hash, create_tokens
 
-@pytest.fixture
-def db_session(test_engine):
-    """Create test database session."""
-    from sqlalchemy.orm import sessionmaker
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-    session = SessionLocal()
-    yield session
-    session.rollback()
-    session.close()
+# ---------------------------------------------------------------------------
+# Async test engine (SQLite in-memory)
+# ---------------------------------------------------------------------------
 
-@pytest.fixture
-def test_client(test_engine):
-    """Create test client for FastAPI app."""
-    from fastapi.testclient import TestClient
-    from fastapi import FastAPI
-    from sqlalchemy.orm import sessionmaker
-    from unittest.mock import patch, MagicMock
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-    # Create a test database session factory
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
-    # Mock the database dependencies
-    def mock_get_db():
-        db = TestSessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
+@pytest_asyncio.fixture(scope="session")
+async def engine():
+    eng = create_async_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=False,
+    )
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield eng
+    await eng.dispose()
 
-    # Patch database functions before importing routers
-    with patch('database.get_db', mock_get_db), \
-         patch('database.engine', test_engine):
 
-        # Import routers after patching
-        from routers import auth, orders, cities, invoices, chat, wallets, payments, promocodes
-        from database import Base
+@pytest_asyncio.fixture
+async def db(engine) -> AsyncGenerator[AsyncSession, None]:
+    """Async session that rolls back after each test."""
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with factory() as session:
+        yield session
+        await session.rollback()
 
-        # Create a fresh app instance for testing
-        app = FastAPI()
 
-        # Create all tables in test database
-        Base.metadata.create_all(bind=test_engine)
+# ---------------------------------------------------------------------------
+# FastAPI app wired to the test DB
+# ---------------------------------------------------------------------------
 
-        # Include all routers (excluding admin as requested)
-        app.include_router(auth.router, prefix="/auth", tags=["auth"])
-        app.include_router(orders.router, prefix="/orders", tags=["orders"])
-        app.include_router(cities.router, prefix="/cities", tags=["cities"])
-        app.include_router(invoices.router, prefix="/invoices", tags=["invoices"])
-        app.include_router(chat.router, prefix="/chat", tags=["chat"])
-        app.include_router(wallets.router, prefix="/wallets", tags=["wallets"])
-        app.include_router(payments.router, prefix="/payments", tags=["payments"])
-        app.include_router(promocodes.router, prefix="/promocodes", tags=["promocodes"])
+@pytest_asyncio.fixture
+async def app(engine):
+    """Return FastAPI app with get_db overridden to use in-memory SQLite."""
+    from main import app as _app
 
-        # Add root endpoint
-        @app.get("/")
-        def read_root():
-            return {"message": "Welcome to the API"}
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-        client = TestClient(app)
-        return client
+    async def _get_db_override():
+        async with factory() as session:
+            yield session
 
-# Mock data fixtures
-@pytest.fixture
-def mock_city(db_session):
-    """Create a mock city."""
-    city = City(name="Test City", icon="test_icon.png", active=True)
-    db_session.add(city)
-    db_session.commit()
-    db_session.refresh(city)
-    return city
+    _app.dependency_overrides[get_db] = _get_db_override
+    yield _app
+    _app.dependency_overrides.clear()
 
-# Predefined test users for consistent testing
-TEST_CUSTOMER_PHONE = "+966500000001"
-TEST_COURIER_PHONE = "+966500000002"
 
-@pytest.fixture
-def test_customer(db_session, mock_city):
-    """Create a predefined test customer user."""
-    user = User(
-        phone_number=TEST_CUSTOMER_PHONE,
-        email="test.customer@example.com",
+@pytest_asyncio.fixture
+async def client(app) -> AsyncGenerator[AsyncClient, None]:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+
+# ---------------------------------------------------------------------------
+# Seed data helpers
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def city(db: AsyncSession) -> City:
+    c = City(name="Riyadh", icon="riyadh.png", active=True)
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@pytest_asyncio.fixture
+async def customer(db: AsyncSession) -> User:
+    u = User(
+        phone_number="+966500000001",
+        email="customer@test.com",
         name="Test Customer",
         date_of_birth=date(1990, 1, 1),
         is_verified=True,
-        role="Customer",
-        city_id=mock_city.id
+        role=UserRole.CUSTOMER,
     )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
-    return user
+    db.add(u)
+    await db.commit()
+    await db.refresh(u)
+    db.add(Wallet(user_id=u.id, balance=50_000))  # 500 SAR
+    db.add(CustomerProfile(user_id=u.id, timezone="Asia/Riyadh"))
+    await db.commit()
+    return u
 
-@pytest.fixture
-def test_courier(db_session, mock_city):
-    """Create a predefined test courier user."""
-    user = User(
-        phone_number=TEST_COURIER_PHONE,
-        email="test.courier@example.com",
+
+@pytest_asyncio.fixture
+async def courier(db: AsyncSession, city: City) -> User:
+    u = User(
+        phone_number="+966500000002",
+        email="courier@test.com",
         name="Test Courier",
         date_of_birth=date(1985, 5, 15),
+        is_verified=True,
+        role=UserRole.COURIER,
+    )
+    db.add(u)
+    await db.commit()
+    await db.refresh(u)
+    db.add(Wallet(user_id=u.id, balance=0))
+    db.add(CourierProfile(
+        user_id=u.id,
         national_id="1234567890",
+        city_id=city.id,
+        iban="SA1234567890123456789012",
+        is_approved=True,
+        is_available=True,
+    ))
+    await db.commit()
+    return u
+
+
+@pytest_asyncio.fixture
+async def unapproved_courier(db: AsyncSession, city: City) -> User:
+    u = User(
+        phone_number="+966500000003",
+        email="unapproved@test.com",
+        name="Unapproved Courier",
+        date_of_birth=date(1990, 6, 1),
         is_verified=True,
-        role="Courier",
-        city_id=mock_city.id
+        role=UserRole.COURIER,
     )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
-    return user
+    db.add(u)
+    await db.commit()
+    await db.refresh(u)
+    db.add(Wallet(user_id=u.id, balance=0))
+    db.add(CourierProfile(
+        user_id=u.id,
+        national_id="0987654321",
+        city_id=city.id,
+        iban="SA9876543210123456789012",
+        is_approved=False,
+        is_available=False,
+    ))
+    await db.commit()
+    return u
 
-@pytest.fixture
-def mock_user_customer(db_session, mock_city):
-    """Create a mock customer user."""
-    import random
-    phone_number = f"+9665{random.randint(10000000, 99999999):08d}"
-    user = User(
-        phone_number=phone_number,
-        email=f"customer{random.randint(1000, 9999)}@test.com",
-        name="Test Customer",
-        date_of_birth=date(1990, 1, 1),
-        is_verified=True,
-        role="Customer",
-        city_id=mock_city.id
-    )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
-    return user
 
-@pytest.fixture
-def mock_user_courier(db_session, mock_city):
-    """Create a mock courier user."""
-    import random
-    phone_number = f"+9665{random.randint(10000000, 99999999):08d}"
-    user = User(
-        phone_number=phone_number,
-        email=f"courier{random.randint(1000, 9999)}@test.com",
-        name="Test Courier",
-        date_of_birth=date(1985, 5, 15),
-        national_id=f"{random.randint(1000000000, 9999999999)}",
-        is_verified=True,
-        role="Courier",
-        city_id=mock_city.id
-    )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
-    return user
+# ---------------------------------------------------------------------------
+# Auth token helpers
+# ---------------------------------------------------------------------------
 
-@pytest.fixture
-def mock_wallet_customer(db_session, mock_user_customer):
-    """Create a mock wallet for customer."""
-    wallet = Wallet(user_id=mock_user_customer.id, balance=10000)  # 100 SAR
-    db_session.add(wallet)
-    db_session.commit()
-    db_session.refresh(wallet)
-    return wallet
+async def make_tokens(db: AsyncSession, user: User):
+    """Generate access + refresh tokens for a user."""
+    return await create_tokens(db, user, device_id="test-device")
 
-@pytest.fixture
-def mock_wallet_courier(db_session, mock_user_courier):
-    """Create a mock wallet for courier."""
-    wallet = Wallet(user_id=mock_user_courier.id, balance=5000)  # 50 SAR
-    db_session.add(wallet)
-    db_session.commit()
-    db_session.refresh(wallet)
-    return wallet
 
-@pytest.fixture
-def mock_order(db_session, mock_user_customer, mock_user_courier, mock_city):
-    """Create a mock order."""
-    from models import OrderStatus
-    order = Order(
-        order_id=str(uuid.uuid4())[:8],
-        created_by_user_id=mock_user_customer.id,
-        assigned_to_user_id=mock_user_courier.id,
-        description="Test order description",
+@pytest_asyncio.fixture
+async def customer_headers(db: AsyncSession, customer: User):
+    access, _ = await make_tokens(db, customer)
+    return {"Authorization": f"Bearer {access}"}
+
+
+@pytest_asyncio.fixture
+async def courier_headers(db: AsyncSession, courier: User):
+    access, _ = await make_tokens(db, courier)
+    return {"Authorization": f"Bearer {access}"}
+
+
+@pytest_asyncio.fixture
+async def unapproved_courier_headers(db: AsyncSession, unapproved_courier: User):
+    access, _ = await make_tokens(db, unapproved_courier)
+    return {"Authorization": f"Bearer {access}"}
+
+
+# ---------------------------------------------------------------------------
+# Common domain objects
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def order(db: AsyncSession, customer: User, city: City) -> Order:
+    o = Order(
+        order_id="ORDR-100001",
+        created_by_user_id=customer.id,
+        description="Test order",
+        city_id=city.id,
+        delivery_date=datetime(2026, 12, 31),
         status=OrderStatus.NEW,
-        city_id=mock_city.id
+        customer_confirmed=False,
     )
-    db_session.add(order)
-    db_session.commit()
-    db_session.refresh(order)
+    db.add(o)
+    await db.commit()
+    await db.refresh(o)
+    # create conversation
+    db.add(Conversation(
+        customer_id=customer.id,
+        courier_id=None,
+        order_id=o.id,
+        status=ConversationStatus.ACTIVE,
+    ))
+    await db.commit()
+    return o
+
+
+@pytest_asyncio.fixture
+async def accepted_order(db: AsyncSession, order: Order, courier: User) -> Order:
+    """Order already accepted by a courier."""
+    order.assigned_to_user_id = courier.id
+    order.status = OrderStatus.RECEIVED_BY_COURIER
+    await db.commit()
+    await db.refresh(order)
     return order
 
-@pytest.fixture
-def mock_invoice(db_session, mock_order, mock_user_customer):
-    """Create a mock invoice."""
-    from models import InvoiceStatus
-    invoice = Invoice(
-        invoice_id=str(uuid.uuid4())[:8],
-        order_id=mock_order.id,
-        created_by_user_id=mock_user_customer.id,
-        full_amount=5000,  # 50 SAR
-        service_fee=500,   # 5 SAR
-        order_only_price=4500,  # 45 SAR
-        courier_fee=1000,  # 10 SAR
+
+@pytest_asyncio.fixture
+async def invoice(db: AsyncSession, order: Order, customer: User) -> Invoice:
+    inv = Invoice(
+        invoice_id="INV-001",
+        order_id=order.id,
+        created_by_user_id=customer.id,
+        full_amount=10_000,   # 100 SAR
+        service_fee=1_000,    # 10 SAR
+        courier_fee=2_000,    # 20 SAR
+        order_only_price=9_000,
         status=InvoiceStatus.NEW,
-        description="Test invoice"
+        description="Test invoice",
     )
-    db_session.add(invoice)
-    db_session.commit()
-    db_session.refresh(invoice)
+    db.add(inv)
+    await db.commit()
+    await db.refresh(inv)
+    return inv
+
+
+@pytest_asyncio.fixture
+async def paid_invoice(db: AsyncSession, order: Order, invoice: Invoice) -> Invoice:
+    invoice.status = InvoiceStatus.PAID
+    order.status = OrderStatus.PAID
+    await db.commit()
     return invoice
 
-@pytest.fixture
-def mock_conversation(db_session, mock_user_customer, mock_user_courier, mock_order):
-    """Create a mock conversation."""
-    conversation = Conversation(
-        customer_id=mock_user_customer.id,
-        courier_id=mock_user_courier.id,
-        order_id=mock_order.id,
-        status="active"
-    )
-    db_session.add(conversation)
-    db_session.commit()
-    db_session.refresh(conversation)
-    return conversation
 
-@pytest.fixture
-def mock_promocode(db_session):
-    """Create a mock promocode."""
-    promocode = Promocode(
-        name="Test Promo",
-        code="TEST10",
-        description="10% off",
+@pytest_asyncio.fixture
+async def promocode(db: AsyncSession) -> Promocode:
+    p = Promocode(
+        name="10% Off",
+        code="SAVE10",
+        description="10% discount",
         percentage=10,
-        max_value=1000,  # 10 SAR max discount
-        minimum_order_value=2000,  # Min 20 SAR
+        max_value=2_000,
+        minimum_order_value=5_000,
         usage_limit=100,
-        valid_until=datetime.utcnow() + timedelta(days=30),
+        usage_count=0,
+        valid_until=datetime.now(timezone.utc) + timedelta(days=30),
         active=True,
-        applicable_to="order_total"
+        applicable_to="order_total",
     )
-    db_session.add(promocode)
-    db_session.commit()
-    db_session.refresh(promocode)
-    return promocode
-
-@pytest.fixture
-def mock_payment(db_session, mock_invoice, mock_user_customer):
-    """Create a mock payment."""
-    from models import PaymentMethod, PaymentStatus
-    payment = Payment(
-        invoice_id=mock_invoice.id,
-        user_id=mock_user_customer.id,
-        amount=5000,
-        payment_method=PaymentMethod.WALLET,
-        status=PaymentStatus.COMPLETED,
-        wallet_balance_before=10000
-    )
-    db_session.add(payment)
-    db_session.commit()
-    db_session.refresh(payment)
-    return payment
+    db.add(p)
+    await db.commit()
+    await db.refresh(p)
+    return p

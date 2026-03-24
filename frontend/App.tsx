@@ -56,7 +56,7 @@ export const useAuth = () => {
 };
 
 // Auth Provider Component
-const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AuthProvider: React.FC<{ children: React.ReactNode, setCurrentScreen: (screen: Screen) => void }> = ({ children, setCurrentScreen }) => {
   const [token, setToken] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
@@ -108,6 +108,9 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     setToken(null);
     setPhone(null);
     setUserData(null);
+
+    // Navigate to welcome screen
+    setCurrentScreen('welcome');
   };
 
   const fetchUserData = async (authToken?: string) => {
@@ -167,8 +170,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   );
 };
 
-const AppContent: React.FC = () => {
-  const [currentScreen, setCurrentScreen] = useState<Screen>('welcome');
+const AppContent: React.FC<{currentScreen: Screen, setCurrentScreen: (screen: Screen) => void}> = ({currentScreen, setCurrentScreen}) => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [authData, setAuthData] = useState<{ phone: string; otp?: string; token?: string } | null>(null);
   const [orderData, setOrderData] = useState<{ description?: string; cityId?: number; deliveryDate?: Date; images?: (string | null)[] } | null>(null);
@@ -600,9 +602,11 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
+  const [currentScreen, setCurrentScreen] = useState<Screen>('welcome');
+
   return (
-    <AuthProvider>
-      <AppContent />
+    <AuthProvider setCurrentScreen={setCurrentScreen}>
+      <AppContent currentScreen={currentScreen} setCurrentScreen={setCurrentScreen} />
     </AuthProvider>
   );
 };

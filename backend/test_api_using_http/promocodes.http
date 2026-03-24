@@ -1,0 +1,99 @@
+### ============================================================
+### PROMOCODES — Apply Promo Code, List Active Codes
+### Base URL: http://localhost:8000
+### Both endpoints are PUBLIC (no auth required)
+### ============================================================
+
+@baseUrl = http://localhost:8000
+
+
+# ---------------------------------------------------------------
+# APPLY PROMOCODE
+# ---------------------------------------------------------------
+
+### [SUCCESS] Apply Promocode — valid code with sufficient order total
+POST {{baseUrl}}/promocodes/apply
+Content-Type: application/json
+
+{
+  "code": "SAVE10",
+  "order_total": 5000
+}
+
+###
+
+### [SUCCESS] Apply Promocode — another valid code
+POST {{baseUrl}}/promocodes/apply
+Content-Type: application/json
+
+{
+  "code": "WELCOME20",
+  "order_total": 10000
+}
+
+###
+
+### [FAIL — Not Found] Apply Promocode — invalid/expired code (404)
+POST {{baseUrl}}/promocodes/apply
+Content-Type: application/json
+
+{
+  "code": "FAKECODE999",
+  "order_total": 5000
+}
+
+###
+
+### [FAIL — Validation] Apply Promocode — order total below minimum (400)
+POST {{baseUrl}}/promocodes/apply
+Content-Type: application/json
+
+{
+  "code": "SAVE10",
+  "order_total": 100
+}
+
+###
+
+### [FAIL — Security] Apply Promocode — SQL injection in code field (404/400)
+POST {{baseUrl}}/promocodes/apply
+Content-Type: application/json
+
+{
+  "code": "' OR '1'='1",
+  "order_total": 5000
+}
+
+###
+
+### [FAIL — Validation] Apply Promocode — negative order total (422/400)
+POST {{baseUrl}}/promocodes/apply
+Content-Type: application/json
+
+{
+  "code": "SAVE10",
+  "order_total": -100
+}
+
+
+# ---------------------------------------------------------------
+# LIST ACTIVE PROMOCODES
+# ---------------------------------------------------------------
+
+### [SUCCESS] List Active Promocodes — default pagination
+GET {{baseUrl}}/promocodes/active/list
+
+###
+
+### [SUCCESS] List Active Promocodes — custom pagination
+GET {{baseUrl}}/promocodes/active/list?skip=0&limit=5
+
+###
+
+### [FAIL — Validation] List Active Promocodes — limit exceeds max (422)
+GET {{baseUrl}}/promocodes/active/list?limit=9999
+
+###
+
+### [FAIL — Validation] List Active Promocodes — negative skip (422)
+GET {{baseUrl}}/promocodes/active/list?skip=-1

@@ -6,7 +6,7 @@ os.chdir(backend_dir)
 
 import asyncio
 from database import AsyncSessionLocal, engine, Base
-from models import User
+from models import Admin
 from auth import get_password_hash
 from sqlalchemy import select
 
@@ -14,10 +14,10 @@ async def check_and_create_admin():
     async with AsyncSessionLocal() as db:
         try:
             # Check if admin already exists
-            result = await db.execute(select(User).where(User.admin_username == "admin"))
+            result = await db.execute(select(Admin).where(Admin.username == "admin"))
             existing_admin = result.scalar_one_or_none()
             if existing_admin:
-                print("Admin user 'admin' already exists - skipping creation")
+                print("Admin 'admin' already exists - skipping creation")
                 return True
 
             # Validate password length (bcrypt limit is 72 bytes)
@@ -26,21 +26,19 @@ async def check_and_create_admin():
                 print("Error: Default admin password is too long")
                 return False
 
-            # Create admin user
+            # Create admin
             hashed_password = get_password_hash(password)
-            admin_user = User(
-                phone_number="559644338",  # dummy phone number
+            admin = Admin(
+                username="admin",
+                password_hash=hashed_password,
                 name="Administrator",
-                is_admin=True,
-                role='Admin',
-                admin_username="admin",
-                admin_password_hash=hashed_password,
-                is_verified=True
+                email="admin@hadiyati.com",
+                is_active=True
             )
-            db.add(admin_user)
+            db.add(admin)
             await db.commit()
-            await db.refresh(admin_user)
-            print("Admin user 'admin' created successfully with password 'admin123'")
+            await db.refresh(admin)
+            print("Admin 'admin' created successfully with password 'admin123'")
             return True
         except Exception as e:
             print(f"Error: {e}")

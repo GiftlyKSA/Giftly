@@ -22,3 +22,8 @@ bcrypt==3.2.2             # latest bcrypt (important for password hashing)  [oai
 websockets==12.0          # for WebSocket
 starlette==0.52.1           # latest Starlette (FastAPI dependency, but good to specify)  [oai_citation:9‡PyPI](https://pypi.org/project/starlette/?utm_source=chatgpt.com)
 jinja2==3.1.4             # for email template rendering
+boto3==1.35.0             # AWS SDK for Python
+slowapi==0.1.9            # Rate limiting for FastAPI (Starlette)
+aiosqlite==0.20.0         # Async SQLite driver for testing
+taskiq==0.11.7            # Distributed task queue framework
+taskiq-redis==0.5.8       # Redis broker for TaskIQ (ListQueueBroker)

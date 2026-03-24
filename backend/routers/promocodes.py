@@ -1,12 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 from sqlalchemy import select
 from database import get_db
 from models import Promocode
 from schemas import ApplyPromocodeRequest
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -19,7 +18,7 @@ async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Dep
         select(Promocode).where(
             Promocode.code == request.code,
             Promocode.active == True,
-            Promocode.valid_until > datetime.utcnow()
+            Promocode.valid_until > datetime.now(timezone.utc)
         )
     )
     promocode = result.scalar_one_or_none()
@@ -56,15 +55,19 @@ async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Dep
     }
 
 @router.get("/active/list", response_model=List[dict])
-async def get_active_promocodes(db: AsyncSession = Depends(get_db)):
+async def get_active_promocodes(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Get all active promocodes. Public endpoint for customers and couriers.
     """
     result = await db.execute(
         select(Promocode).where(
             Promocode.active == True,
-            Promocode.valid_until > datetime.utcnow()
-        )
+            Promocode.valid_until > datetime.now(timezone.utc)
+        ).offset(skip).limit(limit)
     )
     promocodes = result.scalars().all()
 

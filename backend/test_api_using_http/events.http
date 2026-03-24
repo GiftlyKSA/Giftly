@@ -1,0 +1,197 @@
+### ============================================================
+### EVENTS — Important Events (Customers only)
+### Base URL: http://localhost:8000
+### All endpoints require a customer JWT access token
+### ============================================================
+
+@baseUrl = http://localhost:8000
+@accessToken = PASTE_CUSTOMER_ACCESS_TOKEN_HERE
+@otherUserToken = PASTE_OTHER_USER_TOKEN_HERE
+@courierToken = PASTE_COURIER_ACCESS_TOKEN_HERE
+
+
+# ---------------------------------------------------------------
+# CREATE IMPORTANT EVENT
+# ---------------------------------------------------------------
+
+### [SUCCESS] Create Event — one-time birthday event
+POST {{baseUrl}}/events/
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Sara's Birthday",
+  "event_date": "2026-09-20",
+  "recurring": false
+}
+
+###
+
+### [SUCCESS] Create Event — recurring anniversary
+POST {{baseUrl}}/events/
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Wedding Anniversary",
+  "event_date": "2026-06-05",
+  "recurring": true
+}
+
+###
+
+### [FAIL — Security] Create Event — no token (401 Unauthorized)
+POST {{baseUrl}}/events/
+Content-Type: application/json
+
+{
+  "title": "Secret Event",
+  "event_date": "2026-07-01",
+  "recurring": false
+}
+
+###
+
+### [FAIL — Validation] Create Event — missing required title (422)
+POST {{baseUrl}}/events/
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "event_date": "2026-07-01",
+  "recurring": false
+}
+
+###
+
+### [FAIL — Validation] Create Event — invalid date format (422)
+POST {{baseUrl}}/events/
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Bad Date Event",
+  "event_date": "not-a-date",
+  "recurring": false
+}
+
+
+# ---------------------------------------------------------------
+# LIST MY EVENTS
+# ---------------------------------------------------------------
+
+### [SUCCESS] List Events — authenticated customer
+GET {{baseUrl}}/events/
+Authorization: Bearer {{accessToken}}
+
+###
+
+### [SUCCESS] List Events — with pagination
+GET {{baseUrl}}/events/?skip=0&limit=10
+Authorization: Bearer {{accessToken}}
+
+###
+
+### [FAIL — Security] List Events — no token (401)
+GET {{baseUrl}}/events/
+
+###
+
+### [FAIL — Validation] List Events — limit exceeds max (422)
+GET {{baseUrl}}/events/?limit=9999
+Authorization: Bearer {{accessToken}}
+
+
+# ---------------------------------------------------------------
+# GET SPECIFIC EVENT
+# ---------------------------------------------------------------
+
+### [SUCCESS] Get Event — owner retrieves their event
+GET {{baseUrl}}/events/1
+Authorization: Bearer {{accessToken}}
+
+###
+
+### [FAIL — Security] Get Event — IDOR: another user tries to get this event (404)
+GET {{baseUrl}}/events/1
+Authorization: Bearer {{otherUserToken}}
+
+###
+
+### [FAIL — Not Found] Get Event — non-existent event ID (404)
+GET {{baseUrl}}/events/999999
+Authorization: Bearer {{accessToken}}
+
+
+# ---------------------------------------------------------------
+# UPDATE EVENT
+# ---------------------------------------------------------------
+
+### [SUCCESS] Update Event — change title and date
+PUT {{baseUrl}}/events/1
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Sara's Birthday (updated)",
+  "event_date": "2026-09-21",
+  "recurring": true
+}
+
+###
+
+### [SUCCESS] Update Event — partial update (only title)
+PUT {{baseUrl}}/events/1
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Mom's Birthday"
+}
+
+###
+
+### [FAIL — Security] Update Event — another user updates someone else's event (404)
+PUT {{baseUrl}}/events/1
+Authorization: Bearer {{otherUserToken}}
+Content-Type: application/json
+
+{
+  "title": "Hijacked Event"
+}
+
+###
+
+### [FAIL — Security] Update Event — no token (401)
+PUT {{baseUrl}}/events/1
+Content-Type: application/json
+
+{
+  "title": "Unauthorized Update"
+}
+
+
+# ---------------------------------------------------------------
+# DELETE EVENT
+# ---------------------------------------------------------------
+
+### [SUCCESS] Delete Event — owner deletes their own event
+DELETE {{baseUrl}}/events/1
+Authorization: Bearer {{accessToken}}
+
+###
+
+### [FAIL — Security] Delete Event — IDOR: another user deletes someone else's event (404)
+DELETE {{baseUrl}}/events/1
+Authorization: Bearer {{otherUserToken}}
+
+###
+
+### [FAIL — Not Found] Delete Event — non-existent event (404)
+DELETE {{baseUrl}}/events/999999
+Authorization: Bearer {{accessToken}}
+
+###
+
+### [FAIL — Security] Delete Event — no token (401)
+DELETE {{baseUrl}}/events/1

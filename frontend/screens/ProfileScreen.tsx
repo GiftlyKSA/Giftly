@@ -216,7 +216,7 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
             <Feather name="chevron-left" size={18} color={theme.secondaryTextColor} />
           </Pressable>
 
-          <Pressable onPress={onLogout} style={styles.logoutButton}>
+          <Pressable onPress={async () => await onLogout()} style={styles.logoutButton}>
             <View style={styles.menuItemContent}>
               <View style={styles.logoutIcon}>
                 <Feather name="log-out" size={20} color="#EF4444" />
@@ -266,7 +266,7 @@ export const ProfileScreen: React.FC<Props> = ({ onBack, onLogout, onNavigateHom
             </Pressable>
           </View>
 
-          <Pressable onPress={onLogout} style={styles.logoutButton}>
+          <Pressable onPress={async () => await onLogout()} style={styles.logoutButton}>
             <View style={styles.menuItemContent}>
               <View style={styles.logoutIcon}>
                 <Feather name="log-out" size={20} color="#EF4444" />

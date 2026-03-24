@@ -22,7 +22,6 @@ async def add_database_indexes():
             print("Creating User table indexes...")
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_role ON users(role);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_city ON users(city_id);"))
-            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_admin ON users(admin_username) WHERE is_admin = true;"))
             print("✓ User indexes created")
 
             # Order table indexes

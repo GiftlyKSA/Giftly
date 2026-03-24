@@ -39,11 +39,13 @@ class SendOTP(BaseModel):
 class OTPVerify(BaseModel):
     phone_number: str
     otp: str
+    device_id: Optional[str] = None
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     date_of_birth: Optional[date] = None
     national_id: Optional[str] = None
     passport_id: Optional[str] = None
+    timezone: Optional[str] = None
 
     @validator('phone_number')
     def validate_phone_number(cls, v):
@@ -88,6 +90,7 @@ class UpdateUserProfile(BaseModel):
     date_of_birth: Optional[date] = None
     national_id: Optional[str] = None
     passport_id: Optional[str] = None
+    timezone: Optional[str] = None
 
     @validator('name')
     def validate_name(cls, v):
@@ -134,6 +137,21 @@ class CreateOrder(BaseModel):
         if v is not None and len(v.strip()) == 0:
             return None  # Treat empty strings as None
         return v
+
+# New schema for order creation with file uploads
+class CreateOrderWithImages(BaseModel):
+    description: Optional[str] = None
+    city_id: int
+    delivery_date: datetime
+
+    @validator('description')
+    def validate_description(cls, v):
+        if v is not None and len(v.strip()) == 0:
+            return None  # Treat empty strings as None
+        return v
+
+    class Config:
+        arbitrary_types_allowed = True
 
 class InvoiceResponse(BaseModel):
     id: int
@@ -228,27 +246,29 @@ class ConversationResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     content: str
-    message_type: str = "text"  # "text", "invoice", or "image"
+    message_type: str = "text"  # "text", "invoice", "image", "video", "system"
+    media_type: Optional[str] = None  # "image" or "video" when message_type is "image" or "video"
     invoice_description: Optional[str] = None
     invoice_gift_price: Optional[int] = None
     invoice_service_fee: Optional[int] = None
     invoice_delivery_fee: Optional[int] = None
     invoice_total: Optional[int] = None
-    image_data: Optional[str] = None  # Base64 encoded image data
+    media_url: Optional[str] = None  # URL to uploaded media file
 
 class MessageResponse(BaseModel):
     id: int
     conversation_id: int
-    sender_id: int
+    sender_id: Optional[int]  # Nullable for system messages
     content: str
     sent_at: datetime
     message_type: str
+    media_type: Optional[str]
     invoice_description: Optional[str]
     invoice_gift_price: Optional[int]
     invoice_service_fee: Optional[int]
     invoice_delivery_fee: Optional[int]
     invoice_total: Optional[int]
-    image_data: Optional[str]  # Base64 encoded image data
+    media_url: Optional[str]  # URL to uploaded media file
 
     class Config:
         from_attributes = True
@@ -383,3 +403,56 @@ class UpdatePromocode(BaseModel):
 class ApplyPromocodeRequest(BaseModel):
     code: str
     order_total: int
+
+# Important Events schemas
+class CreateImportantEventRequest(BaseModel):
+    title: str
+    event_date: datetime
+    recurring: Optional[bool] = False
+
+    @validator('title')
+    def validate_title(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Title is required')
+        if len(v.strip()) > 200:
+            raise ValueError('Title must be less than 200 characters')
+        return v.strip()
+
+    @validator('event_date')
+    def validate_event_date(cls, v):
+        if v < datetime.utcnow():
+            raise ValueError('Event date cannot be in the past')
+        return v
+
+class ImportantEventResponse(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    event_date: datetime
+    recurring: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UpdateImportantEventRequest(BaseModel):
+    title: Optional[str] = None
+    event_date: Optional[datetime] = None
+    recurring: Optional[bool] = None
+
+    @validator('title')
+    def validate_title(cls, v):
+        if v is not None:
+            if len(v.strip()) == 0:
+                raise ValueError('Title cannot be empty')
+            if len(v.strip()) > 200:
+                raise ValueError('Title must be less than 200 characters')
+            return v.strip()
+        return v
+
+    @validator('event_date')
+    def validate_event_date(cls, v):
+        if v is not None and v < datetime.utcnow():
+            raise ValueError('Event date cannot be in the past')
+        return v

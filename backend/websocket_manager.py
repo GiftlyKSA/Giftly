@@ -38,30 +38,27 @@ class ConnectionManager:
 
     async def broadcast_to_room(self, message: dict, room: str, exclude_user_id: int = None):
         if room in self.rooms:
-            for user_id in self.rooms[room]:
+            # Snapshot the set to avoid mutation-while-iterating bugs
+            for user_id in list(self.rooms.get(room, [])):
                 if user_id != exclude_user_id and user_id in self.active_connections:
                     try:
                         await self.active_connections[user_id].send_json(message)
-                    except:
+                    except Exception:
                         # Connection might be closed, remove it
-                        del self.active_connections[user_id]
-                        self.rooms[room].discard(user_id)
+                        self.active_connections.pop(user_id, None)
+                        if room in self.rooms:
+                            self.rooms[room].discard(user_id)
 
     async def send_to_user(self, user_id: int, message: dict):
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].send_json(message)
-            except:
+            except Exception:
                 # Connection might be closed, remove it
-                del self.active_connections[user_id]
-                # Remove from rooms
-                rooms_to_delete = []
-                for room in self.rooms:
-                    self.rooms[room].discard(user_id)
-                    if not self.rooms[room]:
-                        rooms_to_delete.append(room)
+                self.active_connections.pop(user_id, None)
+                rooms_to_delete = [r for r, uids in self.rooms.items() if not (uids.discard(user_id) or uids)]
                 for room in rooms_to_delete:
-                    del self.rooms[room]
+                    self.rooms.pop(room, None)
 
 
 # Global instance

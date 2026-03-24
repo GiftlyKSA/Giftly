@@ -1,6 +1,7 @@
 from sqladmin import Admin, ModelView
 from database import engine
-from models import User, City, Order, Invoice, Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus, Promocode, Review
+from models import User, Admin, City, Order, Invoice, Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus, Promocode, CourierReview
+from enums import UserRole
 from auth import verify_password
 from sqlalchemy.orm import Session
 from database import AsyncSessionLocal as SessionLocal
@@ -10,15 +11,14 @@ from wtforms import DateField
 from datetime import date
 
 class UserAdmin(ModelView, model=User):
-    column_list = [User.id, User.phone_number, User.email, User.name, User.date_of_birth, User.is_verified, User.otp, User.otp_created_at, User.is_admin, User.role, User.admin_username, User.admin_password_hash, User.city]
+    column_list = [User.id, User.phone_number, User.email, User.name, User.date_of_birth, User.is_verified, User.otp, User.otp_created_at, User.role, User.city]
     column_searchable_list = [User.phone_number, User.email, User.name]
-    #column_filters = [User.is_verified, User.role, User.is_admin]
+    #column_filters = [User.is_verified, User.role]
 
     column_choices = {
         User.role: {
-            'Customer': 'Customer',
-            'Admin': 'Admin',
-            'Courier': 'Courier'
+            UserRole.CUSTOMER.value: 'Customer',
+            UserRole.COURIER.value: 'Courier'
         }
     }
 
@@ -31,6 +31,12 @@ class UserAdmin(ModelView, model=User):
             'format': '%Y-%m-%d'
         }
     }
+
+class AdminAdmin(ModelView, model=Admin):
+    column_list = [Admin.id, Admin.username, Admin.name, Admin.email, Admin.is_active, Admin.created_at, Admin.updated_at]
+    column_searchable_list = [Admin.username, Admin.name, Admin.email]
+    #column_filters = [Admin.is_active]
+    form_excluded_columns = [Admin.created_at, Admin.updated_at]
 
 class CityAdmin(ModelView, model=City):
     __name__ = "Cities"
@@ -140,14 +146,14 @@ class PromocodeAdmin(ModelView, model=Promocode):
         }
     }
 
-class ReviewAdmin(ModelView, model=Review):
-    column_list = [Review.id, Review.reviewer, Review.reviewed_user, Review.rate, Review.comment, Review.created_at]
-    column_searchable_list = [Review.comment]
-    #column_filters = [Review.rate, Review.reviewer, Review.reviewed_user]
-    form_excluded_columns = [Review.created_at]
+class CourierReviewAdmin(ModelView, model=CourierReview):
+    column_list = [CourierReview.id, CourierReview.reviewer, CourierReview.reviewed_user, CourierReview.rate, CourierReview.comment, CourierReview.created_at]
+    column_searchable_list = [CourierReview.comment]
+    #column_filters = [CourierReview.rate, CourierReview.reviewer, CourierReview.reviewed_user]
+    form_excluded_columns = [CourierReview.created_at]
 
     column_choices = {
-        Review.rate: {
+        CourierReview.rate: {
             0: '0 Stars',
             1: '1 Star',
             2: '2 Stars',
@@ -169,12 +175,12 @@ def authenticate_admin_request(request: Request) -> bool:
 
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.admin_username == username, User.is_admin == True).first()
-            print(f"user is {user}") 
-            
-            if not user:
+            admin = db.query(Admin).filter(Admin.username == username, Admin.is_active == True).first()
+            print(f"admin is {admin}")
+
+            if not admin:
                 return False
-            return verify_password(password, user.admin_password_hash)
+            return verify_password(password, admin.password_hash)
         finally:
             db.close()
     except:
