@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocketDisconnect, Depends, RedirectResponse
+from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocketDisconnect, Depends
+from fastapi.responses import RedirectResponse
 from database import engine, Base, AsyncSessionLocal
 from routers import auth, admin, orders, cities, invoices, chat, wallets, payments, promocodes, events
 from routers import couriers
@@ -47,6 +48,20 @@ from starlette.datastructures import URL
 # Logging + activity tracking
 app.add_middleware(LastActivityMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+
+# Security headers middleware
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # Add security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Force HTTPS for all requests
 class ForceHTTPSMiddleware(BaseHTTPMiddleware):
