@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocketDisconnect, Depends, RedirectResponse
 from database import engine, Base, AsyncSessionLocal
 from routers import auth, admin, orders, cities, invoices, chat, wallets, payments, promocodes, events
 from routers import couriers
@@ -48,15 +48,20 @@ from starlette.datastructures import URL
 app.add_middleware(LastActivityMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 
-# Force HTTPS for SQLAdmin redirects
-class ForceHTTPSBaseURL(BaseHTTPMiddleware):
+# Force HTTPS for all requests
+class ForceHTTPSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        request.scope["scheme"] = "https"
-        request._base_url = URL(str(request.base_url).replace("http://", "https://"))
+        # Check if request is HTTP and redirect to HTTPS
+        if request.url.scheme == "http":
+            # Build HTTPS URL
+            https_url = str(request.url).replace("http://", "https://", 1)
+            return RedirectResponse(url=https_url, status_code=status.HTTP_301_MOVED_PERMANENTLY)
+        
+        # For HTTPS requests, continue normally
         response = await call_next(request)
         return response
 
-app.add_middleware(ForceHTTPSBaseURL)
+app.add_middleware(ForceHTTPSMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -283,20 +288,24 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                      "invoice_total": new_message.invoice_total,
                                  }
                              }, room, user.id)
-                     except Exception as e:
-                         print(f"WebSocket: Error sending chat message: {e}")
+                      except Exception as e:
+                          # Log error internally without exposing details to users
+                          import logging
+                          logging.error(f"WebSocket error sending chat message: {str(e)}")
 
     except WebSocketDisconnect:
         if user:
             manager.disconnect(user.id)
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-        if user:
-            manager.disconnect(user.id)
-        try:
-            await websocket.close(code=1011, reason="Internal server error")
-        except Exception:
-            pass
+     except Exception as e:
+         # Log error internally without exposing details to users
+         import logging
+         logging.error(f"WebSocket error: {str(e)}")
+         if user:
+             manager.disconnect(user.id)
+         try:
+             await websocket.close(code=1011, reason="Internal server error")
+         except Exception:
+             pass
     finally:
         await db.close()
 

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, desc, update
+import traceback
 from database import get_db
 from models import (Order, City, User, OrderStatus, Conversation, CourierBalanceAddition,
                     Invoice, Wallet, Payment, PaymentMethod, InvoiceStatus, CourierProfile, OrderImage)
@@ -602,9 +603,13 @@ async def complete_order(
         await emit_order_status_change(order.id, order.status.value)
         return order
 
-    except Exception:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="حدث خطأ أثناء إتمام الطلب. يرجى المحاولة مرة أخرى.")
+     except Exception:
+         await db.rollback()
+         # Log the actual error internally for debugging
+         import logging
+         logging.error(f"Error completing order: {traceback.format_exc()}")
+         # Return generic error message to user to avoid information disclosure
+         raise HTTPException(status_code=500, detail="An error occurred while completing the order. Please try again.")
 
 
 @router.put("/{order_id}/status", response_model=OrderResponse)
