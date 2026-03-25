@@ -45,6 +45,22 @@ class Settings(BaseSettings):
             raise ValueError("secret_key must contain at least one digit")
         if not re.search(r'[!@#$%^&*(),.?":{}|<>]', self.secret_key):
             raise ValueError("secret_key must contain at least one special character")
+        
+        # Validate required environment variables are set
+        required_env_vars = [
+            'secret_key',
+            'database_url', 
+            'access_token_expire_minutes',
+            'refresh_token_expire_days',
+            'aws_access_key_id',
+            'aws_secret_access_key',
+            'aws_s3_bucket_name'
+        ]
+        
+        for var_name in required_env_vars:
+            value = getattr(self, var_name)
+            if not value or (isinstance(value, str) and not value.strip()):
+                raise ValueError(f"Environment variable {var_name} is required but not set")
 
     class Config:
         env_file = os.path.join(os.path.dirname(__file__), ".env")
