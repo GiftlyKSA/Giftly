@@ -126,40 +126,22 @@ async def validate_refresh_token(db: AsyncSession, token: str) -> Tuple[int, Ref
             raise JWTError
         user_id = int(sub)
         jti: str = payload.get("jti")
+        if not jti:
+            raise credentials_exception
     except (JWTError, ValueError):
         raise credentials_exception
 
     # --- O(1) path: look up by jti directly ---
-    if jti:
-        result = await db.execute(
-            select(RefreshToken).where(
-                RefreshToken.jti == jti,
-                RefreshToken.revoked == False,
-                RefreshToken.expires_at > _now(),
-            )
-        )
-        rt = result.scalar_one_or_none()
-        if rt and pwd_context.verify(token[:72], rt.token_hash):
-            return user_id, rt
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token invalid, revoked or expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # --- Legacy fallback: tokens issued before jti was added ---
     result = await db.execute(
         select(RefreshToken).where(
-            RefreshToken.user_id == user_id,
+            RefreshToken.jti == jti,
             RefreshToken.revoked == False,
             RefreshToken.expires_at > _now(),
-            RefreshToken.jti.is_(None),
         )
     )
-    for rt in result.scalars().all():
-        if pwd_context.verify(token[:72], rt.token_hash):
-            return user_id, rt
-
+    rt = result.scalar_one_or_none()
+    if rt and pwd_context.verify(token[:72], rt.token_hash):
+        return user_id, rt
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Refresh token invalid, revoked or expired",

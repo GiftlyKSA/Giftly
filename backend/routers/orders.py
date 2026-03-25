@@ -2,7 +2,7 @@ from datetime import datetime, time, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, desc
+from sqlalchemy import func, select, desc, update
 from database import get_db
 from models import (Order, City, User, OrderStatus, Conversation, CourierBalanceAddition,
                     Invoice, Wallet, Payment, PaymentMethod, InvoiceStatus, CourierProfile, OrderImage)
@@ -557,14 +557,21 @@ async def complete_order(
 
     result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
     courier_wallet = result.scalar_one_or_none()
-    if not courier_wallet:
-        raise HTTPException(status_code=404, detail="Courier wallet not found")
+     if not courier_wallet:
+         raise HTTPException(status_code=404, detail="Courier wallet not found")
 
-    try:
-        balance_before = courier_wallet.balance
-        courier_fee = order.invoice.courier_fee
-        courier_wallet.balance += courier_fee
-        courier_wallet.updated_at = datetime.now(timezone.utc)
+     try:
+         courier_fee = order.invoice.courier_fee
+         # Use atomic update to prevent race conditions
+         await db.execute(
+             update(Wallet)
+             .where(Wallet.user_id == current_user.id)
+             .update({Wallet.balance: Wallet.balance + courier_fee, Wallet.updated_at: datetime.now(timezone.utc)})
+         )
+         # Get updated balance for logging/record keeping
+         result = await db.execute(select(Wallet.balance).where(Wallet.user_id == current_user.id))
+         balance_after = result.scalar_one()
+         balance_before = balance_after - courier_fee
 
         order.status = OrderStatus.DONE
         order.comments = f"Completed by courier ID:{current_user.id} and name:{current_user.name}"

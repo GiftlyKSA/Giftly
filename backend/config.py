@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 import os
+import re
 
 class Settings(BaseSettings):
     secret_key: str
@@ -31,6 +32,19 @@ class Settings(BaseSettings):
     paylink_test_mode: bool = True
     paylink_callback_url: str = ""
     paylink_return_url: str = ""
+
+    def model_post_init(self, __context) -> None:
+        # Validate secret_key strength
+        if len(self.secret_key) < 32:
+            raise ValueError("secret_key must be at least 32 characters long")
+        if not re.search(r'[A-Z]', self.secret_key):
+            raise ValueError("secret_key must contain at least one uppercase letter")
+        if not re.search(r'[a-z]', self.secret_key):
+            raise ValueError("secret_key must contain at least one lowercase letter")
+        if not re.search(r'[0-9]', self.secret_key):
+            raise ValueError("secret_key must contain at least one digit")
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', self.secret_key):
+            raise ValueError("secret_key must contain at least one special character")
 
     class Config:
         env_file = os.path.join(os.path.dirname(__file__), ".env")
