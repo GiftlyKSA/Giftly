@@ -8,29 +8,27 @@ This document outlines potential security vulnerabilities and bugs identified in
 ### Critical Severity
 | ID | Issue | Location | Description | Impact |
 |----|-------|----------|-------------|--------|
-| SEC-001 | Basic Auth Credentials Transmission | `main.py` lines 83-118 | Admin authentication uses Basic Authentication which transmits credentials base64-encoded. While not encrypted, this is only problematic if HTTPS is not properly enforced. | Credentials could be intercepted if HTTPS fails |
-| SEC-002 | JWT Secret Key Weakness Risk | `config.py` | The secret_key is loaded from environment variables but lacks validation for minimum strength. Weak keys could allow JWT token forgery. | Authentication bypass, privilege escalation |
+| SEC-001 | JWT Secret Key Weakness Risk | `config.py` | The secret_key is loaded from environment variables but lacks validation for minimum strength. Weak keys could allow JWT token forgery. | Authentication bypass, privilege escalation |
 
 ### High Severity
 | ID | Issue | Location | Description | Impact |
 |----|-------|----------|-------------|--------|
-| SEC-003 | Refresh Token Validation Logic Flaw | `auth.py` lines 115-167 | The `validate_refresh_token` function has a fallback path that could potentially allow token reuse under certain conditions if the primary JTI validation fails but legacy validation succeeds. | Token replay attacks |
-| SEC-004 | WebSocket Message Injection Risk | `main.py` lines 236-280 | WebSocket message content is used directly in application logic without sufficient sanitization. While ORM provides SQL injection protection, custom string usage could be risky in other contexts. | Potential injection attacks |
-| SEC-005 | Information Exposure in Error Messages | `main.py` line 286, `orders.py` line 600 | Internal exceptions are logged to console and sometimes returned to users, potentially leaking sensitive system information. | Information disclosure aiding attackers |
+| SEC-002 | Refresh Token Validation Logic Flaw | `auth.py` lines 115-167 | The `validate_refresh_token` function has a fallback path that could potentially allow token reuse under certain conditions if the primary JTI validation fails but legacy validation succeeds. | Token replay attacks |
+| SEC-003 | WebSocket Message Injection Risk | `main.py` lines 236-280 | WebSocket message content is used directly in application logic without sufficient sanitization. While ORM provides SQL injection protection, custom string usage could be risky in other contexts. | Potential injection attacks |
+| SEC-004 | Information Exposure in Error Messages | `main.py` line 286, `orders.py` line 600 | Internal exceptions are logged to console and sometimes returned to users, potentially leaking sensitive system information. | Information disclosure aiding attackers |
 
 ### Medium Severity
 | ID | Issue | Location | Description | Impact |
 |----|-------|----------|-------------|--------|
-| SEC-006 | Missing Rate Limiting on OTP Verification | `auth.py` | While send-otp has rate limiting, verify-otp lacks explicit rate limiting, allowing brute-force attacks on OTP codes. | Account takeover via OTP brute-force |
-| SEC-007 | Weak Password Policy | `auth.py` lines 187-193 | Name validation allows numbers and special characters but doesn't enforce complexity. No password strength requirements for admin users. | Weak passwords susceptible to guessing |
-| SEC-008 | Insecure Default Configuration Risk | `config.py` | Debug mode defaults to False but if accidentally enabled in production, exposes the `/auth/dev/otp` endpoint returning valid OTPs. | Authentication bypass in debug mode |
-| SEC-009 | Incomplete HTTPS Enforcement | `main.py` lines 52-59 | The ForceHTTPSBaseURL middleware only affects SQLAdmin routes; other routes might be accessible via HTTP if not behind a enforcing proxy. | Sensitive data transmission over unencrypted channels |
+| SEC-005 | Missing Rate Limiting on OTP Verification | `auth.py` | While send-otp has rate limiting, verify-otp lacks explicit rate limiting, allowing brute-force attacks on OTP codes. | Account takeover via OTP brute-force |
+| SEC-006 | Insecure Default Configuration Risk | `config.py` | Debug mode defaults to False but if accidentally enabled in production, exposes the `/auth/dev/otp` endpoint returning valid OTPs. | Authentication bypass in debug mode |
+| SEC-007 | Incomplete HTTPS Enforcement | `main.py` lines 52-59 | The ForceHTTPSBaseURL middleware only affects SQLAdmin routes; other routes might be accessible via HTTP if not behind a enforcing proxy. | Sensitive data transmission over unencrypted channels |
 
 ### Low Severity
 | ID | Issue | Location | Description | Impact |
 |----|-------|----------|-------------|--------|
-| SEC-010 | Missing Security Headers | Not observed | No cache-control, HSTS, or other security headers observed for sensitive endpoints. | Potential data caching, missing protections |
-| SEC-011 | Environment Variable Validation Missing | `config.py` | No validation that critical environment variables (secret_key, database_url, etc.) are set, risking runtime errors. | Application failure, potential fallback to insecure defaults |
+| SEC-008 | Missing Security Headers | Not observed | No cache-control, HSTS, or other security headers observed for sensitive endpoints. | Potential data caching, missing protections |
+| SEC-009 | Environment Variable Validation Missing | `config.py` | No validation that critical environment variables (secret_key, database_url, etc.) are set, risking runtime errors. | Application failure, potential fallback to insecure defaults |
 
 ## Logical Bugs
 
