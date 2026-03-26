@@ -17,7 +17,7 @@ from jose import JWTError, jwt
 from config import settings
 from websocket_manager import manager
 from contextlib import asynccontextmanager
-from models.enums import UserRole
+from enums import UserRole
 from middleware.logging import RequestLoggingMiddleware
 from middleware.activity import LastActivityMiddleware
 from tasks.broker import broker
@@ -253,73 +253,73 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 manager.disconnect(user.id)
                 await manager.send_to_user(user.id, {"action": "left_all_rooms"})
             elif action == "send_message":
-                room = data.get("room")
-                message_content = data.get("content")
-                # Basic input sanitization to prevent injection attacks
-                if room and message_content and room.startswith("chat_"):
-                    # Sanitize message content - remove any potential harmful content
-                    # Limit message length to prevent DoS
-                    if len(message_content) > 1000:
-                        message_content = message_content[:1000] + "..."
-                    # Remove any null bytes or control characters that could cause issues
-                    message_content = ''.join(char for char in message_content if ord(char) >= 32 or char in '\n\r\t')
-                    try:
-                        conversation_id = int(room.split("_")[1])
-                        conv_result = await db.execute(
-                            select(Conversation).where(Conversation.id == conversation_id)
-                        )
-                        conversation = conv_result.scalar_one_or_none()
-                        if conversation and user.id in [conversation.customer_id, conversation.courier_id]:
-                            new_message = Message(
-                                conversation_id=conversation_id,
-                                sender_id=user.id,
-                                content=message_content,
-                                message_type=data.get("message_type", "text"),
-                                invoice_description=data.get("invoice_description"),
-                                invoice_gift_price=data.get("invoice_gift_price"),
-                                invoice_service_fee=data.get("invoice_service_fee"),
-                                invoice_delivery_fee=data.get("invoice_delivery_fee"),
-                                invoice_total=data.get("invoice_total"),
-                            )
-                            db.add(new_message)
-                            await db.commit()
-                            await db.refresh(new_message)
+                 room = data.get("room")
+                 message_content = data.get("content")
+                 # Basic input sanitization to prevent injection attacks
+                 if room and message_content and room.startswith("chat_"):
+                     # Sanitize message content - remove any potential harmful content
+                     # Limit message length to prevent DoS
+                     if len(message_content) > 1000:
+                         message_content = message_content[:1000] + "..."
+                     # Remove any null bytes or control characters that could cause issues
+                     message_content = ''.join(char for char in message_content if ord(char) >= 32 or char in '\n\r\t')
+                     try:
+                         conversation_id = int(room.split("_")[1])
+                         conv_result = await db.execute(
+                             select(Conversation).where(Conversation.id == conversation_id)
+                         )
+                         conversation = conv_result.scalar_one_or_none()
+                         if conversation and user.id in [conversation.customer_id, conversation.courier_id]:
+                             new_message = Message(
+                                 conversation_id=conversation_id,
+                                 sender_id=user.id,
+                                 content=message_content,
+                                 message_type=data.get("message_type", "text"),
+                                 invoice_description=data.get("invoice_description"),
+                                 invoice_gift_price=data.get("invoice_gift_price"),
+                                 invoice_service_fee=data.get("invoice_service_fee"),
+                                 invoice_delivery_fee=data.get("invoice_delivery_fee"),
+                                 invoice_total=data.get("invoice_total"),
+                             )
+                             db.add(new_message)
+                             await db.commit()
+                             await db.refresh(new_message)
+                             
+                             await manager.broadcast_to_room({
+                                 "event": "chat_message",
+                                 "room": room,
+                                 "data": {
+                                     "id": new_message.id,
+                                     "conversation_id": new_message.conversation_id,
+                                     "sender_id": new_message.sender_id,
+                                     "content": new_message.content,
+                                     "message_type": new_message.message_type,
+                                     "sent_at": new_message.sent_at.isoformat(),
+                                     "invoice_description": new_message.invoice_description,
+                                     "invoice_gift_price": new_message.invoice_gift_price,
+                                     "invoice_service_fee": new_message.invoice_service_fee,
+                                     "invoice_delivery_fee": new_message.invoice_delivery_fee,
+                                     "invoice_total": new_message.invoice_total,
+                                 }
+                             }, room, user.id)
+                     except Exception as e:
+                         # Log error internally without exposing details to users
+                         import logging
+                         logging.error(f"WebSocket error sending chat message: {str(e)}")
 
-                            await manager.broadcast_to_room({
-                                "event": "chat_message",
-                                "room": room,
-                                "data": {
-                                    "id": new_message.id,
-                                    "conversation_id": new_message.conversation_id,
-                                    "sender_id": new_message.sender_id,
-                                    "content": new_message.content,
-                                    "message_type": new_message.message_type,
-                                    "sent_at": new_message.sent_at.isoformat(),
-                                    "invoice_description": new_message.invoice_description,
-                                    "invoice_gift_price": new_message.invoice_gift_price,
-                                    "invoice_service_fee": new_message.invoice_service_fee,
-                                    "invoice_delivery_fee": new_message.invoice_delivery_fee,
-                                    "invoice_total": new_message.invoice_total,
-                                }
-                            }, room, user.id)
-                    except Exception as e:
-                        # Log error internally without exposing details to users
-                        import logging
-                        logging.error(f"WebSocket error sending chat message: {str(e)}")
-
-    except WebSocketDisconnect:
-        if user:
-            manager.disconnect(user.id)
-    except Exception as e:
-        # Log error internally without exposing details to users
-        import logging
-        logging.error(f"WebSocket error: {str(e)}")
-        if user:
-            manager.disconnect(user.id)
-        try:
-            await websocket.close(code=1011, reason="Internal server error")
-        except Exception:
-            pass
+     except WebSocketDisconnect:
+         if user:
+             manager.disconnect(user.id)
+     except Exception as e:
+         # Log error internally without exposing details to users
+         import logging
+         logging.error(f"WebSocket error: {str(e)}")
+         if user:
+             manager.disconnect(user.id)
+         try:
+             await websocket.close(code=1011, reason="Internal server error")
+         except Exception:
+             pass
     finally:
         await db.close()
 

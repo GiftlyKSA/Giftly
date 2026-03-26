@@ -7,7 +7,8 @@ External services (SMS, Paylink, S3) are mocked.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Add the src directory to the Python path so tests can import modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 import pytest_asyncio
@@ -19,28 +20,28 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import StaticPool
 
 # ── must set env vars BEFORE importing app modules ──────────────────────────
-os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long!!")
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
-os.environ.setdefault("REFRESH_TOKEN_EXPIRE_DAYS", "7")
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
-os.environ.setdefault("AWS_S3_BUCKET_NAME", "test-bucket")
-os.environ.setdefault("AWS_REGION", "us-east-1")
-os.environ.setdefault("SMS_PROVIDER_ENABLED", "false")
-os.environ.setdefault("PAYLINK_API_KEY", "")
-os.environ.setdefault("PAYLINK_TEST_MODE", "true")
-os.environ.setdefault("PAYLINK_CALLBACK_URL", "http://localhost/payments/paylink-callback")
-os.environ.setdefault("PAYLINK_RETURN_URL", "http://localhost/return")
+os.environ.setdefault("secret_key", "TestSecretKey123!@#$%^&*()_+-=[]{}|;:',.<>?")
+os.environ.setdefault("database_url", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("access_token_expire_minutes", "30")
+os.environ.setdefault("refresh_token_expire_days", "7")
+os.environ.setdefault("aws_access_key_id", "test")
+os.environ.setdefault("aws_secret_access_key", "test")
+os.environ.setdefault("aws_s3_bucket_name", "test-bucket")
+os.environ.setdefault("aws_region", "us-east-1")
+os.environ.setdefault("sms_provider_enabled", "false")
+os.environ.setdefault("paylink_api_key", "")
+os.environ.setdefault("paylink_test_mode", "true")
+os.environ.setdefault("paylink_callback_url", "http://localhost/payments/paylink-callback")
+os.environ.setdefault("paylink_return_url", "http://localhost/return")
 
 from database import Base, get_db
 from models import (
-    User, City, Order, OrderStatus, Invoice, InvoiceStatus,
+    User, City, Order, Invoice,
     Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus,
     Promocode, PromocodeUsage, CourierProfile, CustomerProfile, RefreshToken,
     ImportantEvent,
 )
-from enums import UserRole, ConversationStatus
+from models.enums import UserRole, ConversationStatus, OrderStatus, InvoiceStatus
 from auth import get_password_hash, create_tokens
 
 # ---------------------------------------------------------------------------

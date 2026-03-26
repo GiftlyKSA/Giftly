@@ -15,8 +15,8 @@ from datetime import datetime, timezone, timedelta, date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import User, RefreshToken, Wallet, CustomerProfile
-from enums import UserRole
-from auth import create_access_token
+from models.enums import UserRole
+from src.auth import create_access_token
 
 pytestmark = pytest.mark.asyncio
 
@@ -123,7 +123,7 @@ async def test_verify_otp_new_user_returns_needs_profile(mock_sms, client, db: A
 @patch("utils.sms.send_sms", new_callable=AsyncMock)
 async def test_verify_otp_existing_verified_customer(mock_sms, client, db: AsyncSession, customer: User):
     # Give the customer a fresh OTP
-    from auth import generate_otp
+    from src.auth import generate_otp
     otp = generate_otp()
     customer.otp = otp
     customer.otp_created_at = datetime.now(timezone.utc)
@@ -186,7 +186,7 @@ async def test_complete_profile_duplicate_email(mock_sms, client, customer: User
 # ---------------------------------------------------------------------------
 
 async def test_refresh_token_rotation(client, db: AsyncSession, customer: User):
-    from auth import create_tokens
+    from src.auth import create_tokens
     access, refresh = await create_tokens(db, customer, "dev-2")
 
     resp = await client.post("/auth/refresh", json={"refresh_token": refresh})
@@ -212,7 +212,7 @@ async def test_refresh_token_cannot_use_access_token(client, customer_headers: d
 # ---------------------------------------------------------------------------
 
 async def test_logout_revokes_refresh_token(client, db: AsyncSession, customer: User):
-    from auth import create_tokens
+    from src.auth import create_tokens
     _, refresh = await create_tokens(db, customer, "dev-3")
     resp = await client.post("/auth/logout", json={"refresh_token": refresh})
     assert resp.status_code == 200
