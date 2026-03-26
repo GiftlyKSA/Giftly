@@ -5,14 +5,14 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, desc, update
 import traceback
 from database import get_db
-from src.models import (Order, City, User, CourierBalanceAddition,
-                      Invoice, Wallet, Payment, CourierProfile, OrderImage)
-from src.models.enums import OrderStatus, InvoiceStatus, PaymentMethod, InvoiceStatus
+from models import (Order, City, User, CourierBalanceAddition,
+                    Invoice, Wallet, Payment, CourierProfile, OrderImage)
+from models.enums import OrderStatus, InvoiceStatus, PaymentMethod
 from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
 from auth import get_current_user
 from websocket_events import emit_order_status_change
 from storage_client import upload_image
-from ..enums import ImageType, UserRole, ConversationStatus
+from models.enums import ImageType, UserRole, ConversationStatus
 import mimetypes
 
 router = APIRouter()
@@ -541,24 +541,23 @@ async def complete_order(
     result = await db.execute(
         select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id)
     )
-    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    if order.status in [OrderStatus.CANCELLED, OrderStatus.DONE]:
-        raise HTTPException(status_code=400, detail="Order cannot be completed")
+     if order.status in [OrderStatus.CANCELLED, OrderStatus.DONE]:
+         raise HTTPException(status_code=400, detail="Order cannot be completed")
 
-    if not order.customer_confirmed:
-        raise HTTPException(status_code=400, detail="Customer has not confirmed delivery yet")
+     if not order.customer_confirmed:
+         raise HTTPException(status_code=400, detail="Customer has not confirmed delivery yet")
 
-    if not order.invoice or order.invoice.status != InvoiceStatus.PAID:
-        raise HTTPException(status_code=400, detail="Order cannot be completed — invoice not paid")
+     if not order.invoice or order.invoice.status != InvoiceStatus.PAID:
+         raise HTTPException(status_code=400, detail="Order cannot be completed — invoice not paid")
 
-    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
-    courier_wallet = result.scalar_one_or_none()
+     result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+     courier_wallet = result.scalar_one_or_none()
      if not courier_wallet:
          raise HTTPException(status_code=404, detail="Courier wallet not found")
 
@@ -575,34 +574,34 @@ async def complete_order(
          balance_after = result.scalar_one()
          balance_before = balance_after - courier_fee
 
-        order.status = OrderStatus.DONE
-        order.comments = f"Completed by courier ID:{current_user.id} and name:{current_user.name}"
-        order.updated_at = datetime.now(timezone.utc)
+         order.status = OrderStatus.DONE
+         order.comments = f"Completed by courier ID:{current_user.id} and name:{current_user.name}"
+         order.updated_at = datetime.now(timezone.utc)
 
-        result = await db.execute(
-            select(Payment).where(
-                Payment.invoice_id == order.invoice.id,
-                Payment.status == "completed",
-            )
-        )
-        payment = result.scalar_one_or_none()
+         result = await db.execute(
+             select(Payment).where(
+                 Payment.invoice_id == order.invoice.id,
+                 Payment.status == "completed",
+             )
+         )
+         payment = result.scalar_one_or_none()
 
-        if payment:
-            courier_balance_addition = CourierBalanceAddition(
-                invoice_id=order.invoice.id,
-                order_id=order.id,
-                user_id=payment.user_id,
-                payment_method=payment.payment_method,
-                balance_before=balance_before,
-                amount_to_add=courier_fee,
-            )
-            db.add(courier_balance_addition)
+         if payment:
+             courier_balance_addition = CourierBalanceAddition(
+                 invoice_id=order.invoice.id,
+                 order_id=order.id,
+                 user_id=payment.user_id,
+                 payment_method=payment.payment_method,
+                 balance_before=balance_before,
+                 amount_to_add=courier_fee,
+             )
+             db.add(courier_balance_addition)
 
-        await db.commit()
-        await db.refresh(order)
+         await db.commit()
+         await db.refresh(order)
 
-        await emit_order_status_change(order.id, order.status.value)
-        return order
+         await emit_order_status_change(order.id, order.status.value)
+         return order
 
      except Exception:
          await db.rollback()
