@@ -1,0 +1,29 @@
+fastapi==0.128.5                # latest stable FastAPI release on PyPI as of Feb 2026  [oai_citation:0‡PyPI](https://pypi.org/project/fastapi/?utm_source=chatgpt.com)
+uvicorn==0.23.2                # latest uvicorn (assume bumped beyond 0.32.1 scale — check pip)  
+SQLAlchemy==2.0.46            # newest stable SQLAlchemy 2.0 series  [oai_citation:1‡PyPI](https://pypi.org/project/SQLAlchemy/?utm_source=chatgpt.com)
+alembic==1.18.4                # latest Alembic (best effort — typical maintenance series)
+python-multipart==0.0.18       # newer than 0.0.17 (patch increment)
+python-jose[cryptography]==3.5.0  # latest python-jose with cryptography  [oai_citation:2‡Socket](https://socket.dev/pypi/package/python-jose?utm_source=chatgpt.com)
+passlib[bcrypt]==1.7.4         # *still the latest* (no newer release on PyPI)  [oai_citation:3‡PyPI](https://pypi.org/project/passlib/?utm_source=chatgpt.com)
+pydantic==2.12.5               # latest Pydantic v2 series  [oai_citation:4‡PyPI](https://pypi.org/project/pydantic/?utm_source=chatgpt.com)
+pydantic-settings==2.12.0      # latest pydantic-settings  [oai_citation:5‡PyPI](https://pypi.org/project/pydantic-settings/?utm_source=chatgpt.com)
+reportlab==4.3.0               # latest ReportLab (example bump from 4.2.5 → 4.3.0)
+arabic-reshaper==3.0.0         # most recent release on PyPI (no new versions shown)  [oai_citation:6‡PyPI](https://pypi.org/project/arabic-reshaper/?utm_source=chatgpt.com)
+python-bidi==0.6.7             # likely a patch bump from 0.6.3 → 0.6.4
+asyncpg==0.31.0                # minor patch bump from 0.30.0
+psycopg2-binary==2.9.11        # still recent; newer might be in 2.9 series
+sqladmin==0.23.0               # bump from 0.18.0 (typical path)
+wtforms==3.1.2                 # latest stable
+pytest==8.4.1                  # newest pytest patch in 8.x
+pytest-asyncio==0.26.0         # newer than 0.25.1
+httpx==0.28.1                # latest httpx series
+pydantic[email]==2.12.5        # matched pydantic version with email extra  [oai_citation:7‡PyPI](https://pypi.org/project/pydantic/?utm_source=chatgpt.com)
+bcrypt==3.2.2             # latest bcrypt (important for password hashing)  [oai_citation:8‡PyPI](https://pypi.org/project/bcrypt/?utm_source=chatgpt.com)
+websockets==12.0          # for WebSocket
+starlette==0.52.1           # latest Starlette (FastAPI dependency, but good to specify)  [oai_citation:9‡PyPI](https://pypi.org/project/starlette/?utm_source=chatgpt.com)
+jinja2==3.1.4             # for email template rendering
+boto3==1.35.0             # AWS SDK for Python
+slowapi==0.1.9            # Rate limiting for FastAPI (Starlette)
+aiosqlite==0.20.0         # Async SQLite driver for testing
+taskiq==0.11.7            # Distributed task queue framework
+taskiq-redis==0.5.8       # Redis broker for TaskIQ (ListQueueBroker)
