@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Foreign
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
-from enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
+from ..enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
 from sqlalchemy import event
 
 class CourierProfile(Base):

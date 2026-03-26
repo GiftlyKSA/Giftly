@@ -1,7 +1,7 @@
 from sqladmin import Admin, ModelView
 from database import engine
 from models import User, Admin, City, Order, Invoice, Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus, Promocode, CourierReview
-from enums import UserRole
+from .models.enums import UserRole
 from auth import verify_password
 from sqlalchemy.orm import Session
 from database import AsyncSessionLocal as SessionLocal

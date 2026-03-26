@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from database import get_db
 from models import CourierProfile, User
 from auth import get_current_user
-from enums import UserRole
+from models.enums import UserRole
 
 router = APIRouter()
 

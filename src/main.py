@@ -10,7 +10,7 @@ import base64
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models import User, Admin, Conversation, Message
+from src.models import User, Admin, Conversation, Message
 from fastapi.responses import JSONResponse
 import os
 from jose import JWTError, jwt

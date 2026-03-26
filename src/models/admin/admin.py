@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, U
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
-from enums import UserRole
+from ..enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
 
 
 class Admin(Base):

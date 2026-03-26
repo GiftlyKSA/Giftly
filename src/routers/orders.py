@@ -5,13 +5,14 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, desc, update
 import traceback
 from database import get_db
-from src.models import (Order, City, User, OrderStatus, Conversation, CourierBalanceAddition,
-                     Invoice, Wallet, Payment, PaymentMethod, InvoiceStatus, CourierProfile, OrderImage)
+from src.models import (Order, City, User, CourierBalanceAddition,
+                      Invoice, Wallet, Payment, CourierProfile, OrderImage)
+from src.models.enums import OrderStatus, InvoiceStatus, PaymentMethod, InvoiceStatus
 from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
 from auth import get_current_user
 from websocket_events import emit_order_status_change
 from storage_client import upload_image
-from enums import ImageType, UserRole, ConversationStatus
+from ..enums import ImageType, UserRole, ConversationStatus
 import mimetypes
 
 router = APIRouter()
