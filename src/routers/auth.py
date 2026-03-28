@@ -5,12 +5,18 @@ from datetime import datetime, timedelta, date, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from database import get_db
+from utils.database.database import get_db
 from models import User, Wallet, CustomerProfile, CourierProfile
 from schemas import SendOTP, OTPVerify, Token, UpdateUserProfile, RefreshTokenRequest
-from auth import (create_access_token, create_tokens, generate_otp,
-                  get_user_by_phone, get_current_user, validate_refresh_token)
-from config import settings
+from utils.auth.auth import (
+    create_access_token,
+    create_tokens,
+    generate_otp,
+    get_user_by_phone,
+    get_current_user,
+    validate_refresh_token,
+)
+from utils.database.config import settings
 from utils.clients.sms import send_sms
 
 router = APIRouter()
@@ -20,15 +26,18 @@ router = APIRouter()
 # For multi-server deployments replace with Redis-backed counters.
 # ---------------------------------------------------------------------------
 _PHONE_WINDOW = settings.rate_limit_otp_window_seconds
-_PHONE_MAX    = settings.rate_limit_otp_max
+_PHONE_MAX = settings.rate_limit_otp_max
 
 _phone_timestamps: dict[str, list[float]] = defaultdict(list)
 _verify_timestamps: dict[str, list[float]] = defaultdict(list)
 
+
 def _check_phone_rate_limit(phone: str) -> None:
     now = time.monotonic()
     # Evict old entries
-    _phone_timestamps[phone] = [t for t in _phone_timestamps[phone] if now - t < _PHONE_WINDOW]
+    _phone_timestamps[phone] = [
+        t for t in _phone_timestamps[phone] if now - t < _PHONE_WINDOW
+    ]
     if len(_phone_timestamps[phone]) >= _PHONE_MAX:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -36,10 +45,13 @@ def _check_phone_rate_limit(phone: str) -> None:
         )
     _phone_timestamps[phone].append(now)
 
+
 def _check_phone_verify_rate_limit(phone: str) -> None:
     now = time.monotonic()
     # Evict old entries
-    _verify_timestamps[phone] = [t for t in _verify_timestamps[phone] if now - t < _PHONE_WINDOW]
+    _verify_timestamps[phone] = [
+        t for t in _verify_timestamps[phone] if now - t < _PHONE_WINDOW
+    ]
     if len(_verify_timestamps[phone]) >= _PHONE_MAX:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -52,8 +64,11 @@ def _check_phone_verify_rate_limit(phone: str) -> None:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.post("/send-otp", response_model=dict)
-async def send_otp(request: Request, otp_request: SendOTP, db: AsyncSession = Depends(get_db)):
+async def send_otp(
+    request: Request, otp_request: SendOTP, db: AsyncSession = Depends(get_db)
+):
     # Note: `request` is kept for IP-based rate-limiting in future (e.g. slowapi)
     phone_number = otp_request.phone_number
 
@@ -70,8 +85,11 @@ async def send_otp(request: Request, otp_request: SendOTP, db: AsyncSession = De
         user.otp_created_at = datetime.now(timezone.utc)
         await db.commit()
     else:
-        user = User(phone_number=phone_number, otp=otp,
-                    otp_created_at=datetime.now(timezone.utc))
+        user = User(
+            phone_number=phone_number,
+            otp=otp,
+            otp_created_at=datetime.now(timezone.utc),
+        )
         db.add(user)
         await db.commit()
         await db.refresh(user)
@@ -98,20 +116,26 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
         created = user.otp_created_at
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - created > timedelta(seconds=settings.otp_expiry_seconds):
+        if datetime.now(timezone.utc) - created > timedelta(
+            seconds=settings.otp_expiry_seconds
+        ):
             # Invalidate expired OTP
             user.otp = None
             await db.commit()
-            raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+            raise HTTPException(
+                status_code=400, detail="OTP has expired. Please request a new one."
+            )
 
     if user.otp != otp_data.otp:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     user.otp = None  # Consume OTP
 
-    if user.role == 'Courier':
+    if user.role == "Courier":
         if user.is_verified:
-            access_token, refresh_token = await create_tokens(db, user, otp_data.device_id)
+            access_token, refresh_token = await create_tokens(
+                db, user, otp_data.device_id
+            )
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
@@ -122,27 +146,47 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
                     "phone_number": user.phone_number,
                     "email": user.email,
                     "name": user.name,
-                    "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+                    "date_of_birth": user.date_of_birth.isoformat()
+                    if user.date_of_birth
+                    else None,
                     "is_verified": user.is_verified,
                     "role": user.role,
                 },
                 "profile": {
-                    "national_id": user.courier_profile.national_id if user.courier_profile else None,
-                    "passport_id": user.courier_profile.passport_id if user.courier_profile else None,
-                    "city_id": user.courier_profile.city_id if user.courier_profile else None,
+                    "national_id": user.courier_profile.national_id
+                    if user.courier_profile
+                    else None,
+                    "passport_id": user.courier_profile.passport_id
+                    if user.courier_profile
+                    else None,
+                    "city_id": user.courier_profile.city_id
+                    if user.courier_profile
+                    else None,
                     "iban": user.courier_profile.iban if user.courier_profile else None,
-                    "vehicle": user.courier_profile.vehicle if user.courier_profile else None,
-                    "license": user.courier_profile.license if user.courier_profile else None,
-                    "rate": user.courier_profile.get_average_rate() if user.courier_profile else 0,
-                    "is_approved": user.courier_profile.is_approved if user.courier_profile else False,
-                    "is_available": user.courier_profile.is_available if user.courier_profile else False,
+                    "vehicle": user.courier_profile.vehicle
+                    if user.courier_profile
+                    else None,
+                    "license": user.courier_profile.license
+                    if user.courier_profile
+                    else None,
+                    "rate": user.courier_profile.get_average_rate()
+                    if user.courier_profile
+                    else 0,
+                    "is_approved": user.courier_profile.is_approved
+                    if user.courier_profile
+                    else False,
+                    "is_available": user.courier_profile.is_available
+                    if user.courier_profile
+                    else False,
                 },
             }
         else:
             raise HTTPException(status_code=400, detail="حسابك لم يتم التحقق منه بعد")
     else:
         if user.is_verified:
-            access_token, refresh_token = await create_tokens(db, user, otp_data.device_id)
+            access_token, refresh_token = await create_tokens(
+                db, user, otp_data.device_id
+            )
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
@@ -153,12 +197,16 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
                     "phone_number": user.phone_number,
                     "email": user.email,
                     "name": user.name,
-                    "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+                    "date_of_birth": user.date_of_birth.isoformat()
+                    if user.date_of_birth
+                    else None,
                     "is_verified": user.is_verified,
                     "role": user.role,
                 },
                 "profile": {
-                    "timezone": user.customer_profile.timezone if user.customer_profile else None,
+                    "timezone": user.customer_profile.timezone
+                    if user.customer_profile
+                    else None,
                 },
             }
         else:
@@ -182,10 +230,14 @@ async def read_current_user(current_user: User = Depends(get_current_user)):
         "phone_number": current_user.phone_number,
         "email": current_user.email,
         "name": current_user.name,
-        "date_of_birth": current_user.date_of_birth.isoformat() if current_user.date_of_birth else None,
+        "date_of_birth": current_user.date_of_birth.isoformat()
+        if current_user.date_of_birth
+        else None,
         "is_verified": current_user.is_verified,
         "role": current_user.role,
-        "timezone": current_user.customer_profile.timezone if current_user.customer_profile else None,
+        "timezone": current_user.customer_profile.timezone
+        if current_user.customer_profile
+        else None,
     }
 
 
@@ -201,17 +253,21 @@ async def update_current_user(
         errors["name"] = "الاسم مطلوب"
     elif len(user_update.name.strip()) < 2:
         errors["name"] = "الاسم يجب أن يكون 2 أحرف على الأقل"
-    elif not re.match(r'^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s]+$',
-                      user_update.name.strip()):
+    elif not re.match(
+        r"^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s]+$",
+        user_update.name.strip(),
+    ):
         errors["name"] = "الاسم يجب أن يحتوي على أحرف فقط"
 
     if user_update.email is None or user_update.email.strip() == "":
         errors["email"] = "البريد الإلكتروني مطلوب"
-    elif not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', user_update.email.strip()):
+    elif not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", user_update.email.strip()):
         errors["email"] = "صيغة البريد الإلكتروني غير صحيحة"
     else:
         result = await db.execute(
-            select(User).where(User.email == user_update.email.strip(), User.id != current_user.id)
+            select(User).where(
+                User.email == user_update.email.strip(), User.id != current_user.id
+            )
         )
         if result.scalar_one_or_none():
             errors["email"] = "البريد الإلكتروني مستخدم بالفعل"
@@ -220,8 +276,13 @@ async def update_current_user(
         errors["date_of_birth"] = "تاريخ الميلاد مطلوب"
     else:
         today = date.today()
-        age = today.year - user_update.date_of_birth.year - (
-            (today.month, today.day) < (user_update.date_of_birth.month, user_update.date_of_birth.day)
+        age = (
+            today.year
+            - user_update.date_of_birth.year
+            - (
+                (today.month, today.day)
+                < (user_update.date_of_birth.month, user_update.date_of_birth.day)
+            )
         )
         if age < 16:
             errors["date_of_birth"] = "يجب أن يكون عمرك 16 سنة على الأقل"
@@ -239,7 +300,9 @@ async def update_current_user(
         if current_user.customer_profile:
             current_user.customer_profile.timezone = user_update.timezone
         else:
-            db.add(CustomerProfile(user_id=current_user.id, timezone=user_update.timezone))
+            db.add(
+                CustomerProfile(user_id=current_user.id, timezone=user_update.timezone)
+            )
 
     await db.commit()
     await db.refresh(current_user)
@@ -249,9 +312,13 @@ async def update_current_user(
         "phone_number": current_user.phone_number,
         "email": current_user.email,
         "name": current_user.name,
-        "date_of_birth": current_user.date_of_birth.isoformat() if current_user.date_of_birth else None,
+        "date_of_birth": current_user.date_of_birth.isoformat()
+        if current_user.date_of_birth
+        else None,
         "is_verified": current_user.is_verified,
-        "timezone": current_user.customer_profile.timezone if current_user.customer_profile else None,
+        "timezone": current_user.customer_profile.timezone
+        if current_user.customer_profile
+        else None,
     }
 
 
@@ -270,7 +337,11 @@ async def refresh_access_token(
         raise HTTPException(status_code=404, detail="User not found")
 
     access_token, refresh_token = await create_tokens(db, user, old_rt.device_id)
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/complete-profile", response_model=Token)
@@ -286,7 +357,9 @@ async def complete_profile(
     role = profile_data.get("role", "Customer")
 
     if not all([phone_number, name, email, date_of_birth_str]):
-        raise HTTPException(status_code=400, detail="Name, email, and date of birth are required")
+        raise HTTPException(
+            status_code=400, detail="Name, email, and date of birth are required"
+        )
 
     try:
         date_of_birth = datetime.fromisoformat(date_of_birth_str).date()
@@ -299,7 +372,9 @@ async def complete_profile(
     if user.is_verified:
         raise HTTPException(status_code=400, detail="Profile already completed")
 
-    result = await db.execute(select(User).where(User.email == email, User.id != user.id))
+    result = await db.execute(
+        select(User).where(User.email == email, User.id != user.id)
+    )
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email is already registered")
 
@@ -319,6 +394,7 @@ async def complete_profile(
     access_token, refresh_token = await create_tokens(db, user)
 
     from tasks.email_tasks import send_welcome_email_task
+
     await send_welcome_email_task.kiq(user.id)
 
     return {
@@ -339,9 +415,16 @@ async def update_timezone(
     if not new_timezone:
         raise HTTPException(status_code=400, detail="Timezone is required")
 
-    current_tz = current_user.customer_profile.timezone if current_user.customer_profile else None
+    current_tz = (
+        current_user.customer_profile.timezone
+        if current_user.customer_profile
+        else None
+    )
     if current_tz == new_timezone:
-        return {"message": "Timezone is already set to this value", "timezone": current_tz}
+        return {
+            "message": "Timezone is already set to this value",
+            "timezone": current_tz,
+        }
 
     if current_user.customer_profile:
         current_user.customer_profile.timezone = new_timezone
@@ -352,7 +435,9 @@ async def update_timezone(
     await db.refresh(current_user)
     return {
         "message": "Timezone updated successfully",
-        "timezone": current_user.customer_profile.timezone if current_user.customer_profile else None,
+        "timezone": current_user.customer_profile.timezone
+        if current_user.customer_profile
+        else None,
     }
 
 
@@ -394,7 +479,8 @@ async def logout(
     rt.revoked = True
     await db.commit()
 
-    from websocket_manager import manager
+    from utils.websocket.websocket_manager import manager
+
     manager.disconnect(user_id)
 
     return {"message": "Successfully logged out"}
@@ -404,6 +490,7 @@ async def logout(
 # DEV ONLY — returns the stored OTP so tests can run without an SMS provider
 # Disabled automatically when DEBUG=false in .env
 # ---------------------------------------------------------------------------
+
 
 @router.get("/dev/otp")
 async def dev_get_otp(phone_number: str, db: AsyncSession = Depends(get_db)):

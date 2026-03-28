@@ -4,14 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, desc, update
 import traceback
-from database import get_db
+from utils.database.database import get_db
 from models import (Order, City, User, CourierBalanceAddition,
                     Invoice, Wallet, Payment, CourierProfile, OrderImage)
 from models.enums import OrderStatus, InvoiceStatus, PaymentMethod
 from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
-from auth import get_current_user
-from websocket_events import emit_order_status_change
-from storage_client import upload_image
+from utils.auth.auth import get_current_user
+from utils.websocket.websocket_events import emit_order_status_change
+from utils.clients.storage_client import upload_image
 from models.enums import ImageType, UserRole, ConversationStatus
 import mimetypes
 
@@ -103,9 +103,9 @@ async def create_order(
     db.add(new_conversation)
     await db.commit()
     await db.refresh(new_conversation)
-
+  
     if new_order.description and new_order.description.strip():
-        from websocket_events import emit_chat_message
+        from utils.websocket.websocket_events import emit_chat_message
         from models import Message
 
         initial_message = Message(
@@ -140,12 +140,12 @@ async def create_order(
         db.add(image_message)
         image_messages.append(image_message)
 
-    if image_messages:
-        await db.commit()
-        for image_message in image_messages:
-            await db.refresh(image_message)
-            from websocket_events import emit_chat_message
-            await emit_chat_message(new_conversation.id, {
+     if image_messages:
+         await db.commit()
+         for image_message in image_messages:
+             await db.refresh(image_message)
+         from utils.websocket.websocket_events import emit_chat_message
+             await emit_chat_message(new_conversation.id, {
                 "id": image_message.id,
                 "conversation_id": image_message.conversation_id,
                 "sender_id": image_message.sender_id,
@@ -155,10 +155,10 @@ async def create_order(
                 "sent_at": image_message.sent_at.isoformat()
             }, db)
 
-    await emit_order_status_change(new_order.id, new_order.status.value)
-
-    from websocket_manager import manager
-    await manager.broadcast_to_room({
+     await emit_order_status_change(new_order.id, new_order.status.value)
+ 
+     from utils.websocket.websocket_manager import manager
+     await manager.broadcast_to_room({
         "event": "new_order",
         "data": {
             "order_id": new_order.order_id,
@@ -383,7 +383,7 @@ async def accept_order(
     await db.commit()
     await db.refresh(order)
 
-    from websocket_events import emit_chat_message
+    from utils.websocket.websocket_events import emit_chat_message
     from models import Message
 
     customer_name = order.created_by_user.name if order.created_by_user else "عميلنا الكريم"
@@ -408,7 +408,7 @@ async def accept_order(
 
     await emit_order_status_change(order.id, order.status.value)
 
-    from websocket_manager import manager
+    from utils.websocket.websocket_manager import manager
     await manager.send_to_user(order.created_by_user_id, {
         "event": "chat_available",
         "data": {

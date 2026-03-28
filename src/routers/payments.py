@@ -5,13 +5,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import func
 from sqlalchemy import select
-from database import get_db
-from models import (Payment, Invoice, User, Wallet, Order, OrderStatus,
-                    InvoiceStatus, PaymentStatus, PaymentMethod, Promocode,
-                    PromocodeUsage)
+from utils.database.database import get_db
+from models import (
+    Payment,
+    Invoice,
+    User,
+    Wallet,
+    Order,
+    OrderStatus,
+    InvoiceStatus,
+    PaymentStatus,
+    PaymentMethod,
+    Promocode,
+    PromocodeUsage,
+)
 from schemas import PaymentResponse, CreatePayment
-from auth import get_current_user
-from enums import PaymentMethod as PaymentMethodEnum
+from utils.auth.auth import get_current_user
+from models.enums import PaymentMethod as PaymentMethodEnum
 
 router = APIRouter()
 
@@ -19,7 +29,10 @@ router = APIRouter()
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _mark_invoice_paid(invoice: Invoice, total_paid: int, current_user: User, db: AsyncSession):
+
+async def _mark_invoice_paid(
+    invoice: Invoice, total_paid: int, current_user: User, db: AsyncSession
+):
     """Set invoice + order to PAID, send payment chat message, emit WS events."""
     invoice.status = InvoiceStatus.PAID
     invoice.updated_at = datetime.now(timezone.utc)
@@ -28,8 +41,9 @@ async def _mark_invoice_paid(invoice: Invoice, total_paid: int, current_user: Us
     await db.commit()
 
     if invoice.order.conversation:
-        from websocket_events import emit_chat_message
+        from utils.websocket.websocket_events import emit_chat_message
         from models import Message
+
         msg = Message(
             conversation_id=invoice.order.conversation.id,
             sender_id=current_user.id,
@@ -39,29 +53,39 @@ async def _mark_invoice_paid(invoice: Invoice, total_paid: int, current_user: Us
         db.add(msg)
         await db.commit()
         await db.refresh(msg)
-        await emit_chat_message(invoice.order.conversation.id, {
-            "id": msg.id,
-            "conversation_id": msg.conversation_id,
-            "sender_id": msg.sender_id,
-            "content": msg.content,
-            "message_type": msg.message_type,
-            "sent_at": msg.sent_at.isoformat(),
-        }, db)
-
-    from websocket_events import emit_order_status_change
-    await emit_order_status_change(invoice.order.id, invoice.order.status.value)
+        await emit_chat_message(
+            invoice.order.conversation.id,
+            {
+                "id": msg.id,
+                "conversation_id": msg.conversation_id,
+                "sender_id": msg.sender_id,
+                "content": msg.content,
+                "message_type": msg.message_type,
+                "sent_at": msg.sent_at.isoformat(),
+            },
+                 db,
+             )
+ 
+         from utils.websocket.websocket_events import emit_order_status_change
+ 
+         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
 
 
 # ---------------------------------------------------------------------------
 # Paylink-gated payment methods
 # ---------------------------------------------------------------------------
 
-PAYLINK_METHODS = {PaymentMethodEnum.CREDIT_CARD, PaymentMethodEnum.APPLE_PAY, PaymentMethodEnum.MADA}
+PAYLINK_METHODS = {
+    PaymentMethodEnum.CREDIT_CARD,
+    PaymentMethodEnum.APPLE_PAY,
+    PaymentMethodEnum.MADA,
+}
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/", response_model=PaymentResponse)
 async def create_payment(
@@ -84,16 +108,22 @@ async def create_payment(
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     if invoice.order.created_by_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied — invoice not owned by user")
+        raise HTTPException(
+            status_code=403, detail="Access denied — invoice not owned by user"
+        )
 
     if payment_data.user_id != current_user.id:
         raise HTTPException(status_code=400, detail="User ID must match current user")
 
     # --- Paylink gateway for card-based methods ---
-    from config import settings
+    from utils.database.config import settings
+
     if payment_data.payment_method in PAYLINK_METHODS:
         if not settings.paylink_api_key:
-            raise HTTPException(status_code=503, detail="Payment gateway not configured. Contact support.")
+            raise HTTPException(
+                status_code=503,
+                detail="Payment gateway not configured. Contact support.",
+            )
 
         new_payment = Payment(
             invoice_id=payment_data.invoice_id,
@@ -107,32 +137,41 @@ async def create_payment(
         await db.refresh(new_payment)
 
         from utils.clients.paylink import PaylinkClient
+
         try:
-            async with PaylinkClient(settings.paylink_api_key, settings.paylink_test_mode) as paylink:
-                resp = await paylink.create_invoice({
-                    "amount": payment_data.amount / 100,
-                    "currency": "SAR",
-                    "description": f"Invoice {invoice.invoice_id}",
-                    "customer": {
-                        "name": current_user.name or "Customer",
-                        "email": current_user.email or "",
-                        "phone": current_user.phone_number,
-                    },
-                    "invoiceNumber": str(new_payment.id),
-                    "callBackUrl": settings.paylink_callback_url,
-                    "returnUrl": settings.paylink_return_url,
-                })
+            async with PaylinkClient(
+                settings.paylink_api_key, settings.paylink_test_mode
+            ) as paylink:
+                resp = await paylink.create_invoice(
+                    {
+                        "amount": payment_data.amount / 100,
+                        "currency": "SAR",
+                        "description": f"Invoice {invoice.invoice_id}",
+                        "customer": {
+                            "name": current_user.name or "Customer",
+                            "email": current_user.email or "",
+                            "phone": current_user.phone_number,
+                        },
+                        "invoiceNumber": str(new_payment.id),
+                        "callBackUrl": settings.paylink_callback_url,
+                        "returnUrl": settings.paylink_return_url,
+                    }
+                )
         except Exception as e:
             new_payment.status = PaymentStatus.FAILED
             await db.commit()
-            raise HTTPException(status_code=502, detail=f"Payment gateway error: {str(e)}")
+            raise HTTPException(
+                status_code=502, detail=f"Payment gateway error: {str(e)}"
+            )
 
-        new_payment.transaction_id = str(resp.get("transactionNo") or resp.get("id") or "")
+        new_payment.transaction_id = str(
+            resp.get("transactionNo") or resp.get("id") or ""
+        )
         await db.commit()
         await db.refresh(new_payment)
 
         # Return payment_url alongside the standard PaymentResponse fields
-        return new_payment   # client should also check payment_url in response body via dict
+        return new_payment  # client should also check payment_url in response body via dict
 
     # --- Wallet: redirect to the proper endpoint ---
     if payment_data.payment_method == PaymentMethodEnum.WALLET:
@@ -153,8 +192,12 @@ async def paylink_callback(
     Webhook endpoint called by Paylink after a payment completes.
     Verifies the transaction and marks the payment/invoice as paid.
     """
-    transaction_no = str(payload.get("transactionNo") or payload.get("orderNumber") or "")
-    paylink_status = str(payload.get("orderStatus") or payload.get("status") or "").lower()
+    transaction_no = str(
+        payload.get("transactionNo") or payload.get("orderNumber") or ""
+    )
+    paylink_status = str(
+        payload.get("orderStatus") or payload.get("status") or ""
+    ).lower()
 
     if not transaction_no:
         raise HTTPException(status_code=400, detail="Missing transactionNo")
@@ -163,7 +206,8 @@ async def paylink_callback(
     result = await db.execute(
         select(Payment)
         .options(
-            selectinload(Payment.invoice).selectinload(Invoice.order)
+            selectinload(Payment.invoice)
+            .selectinload(Invoice.order)
             .selectinload(Order.conversation)
         )
         .where(Payment.transaction_id == transaction_no)
@@ -175,7 +219,9 @@ async def paylink_callback(
         try:
             pid = int(transaction_no)
             result = await db.execute(
-                select(Payment).where(Payment.id == pid, Payment.status == PaymentStatus.PENDING)
+                select(Payment).where(
+                    Payment.id == pid, Payment.status == PaymentStatus.PENDING
+                )
             )
             payment = result.scalar_one_or_none()
         except ValueError:
@@ -201,7 +247,9 @@ async def paylink_callback(
             )
             invoice = result2.scalar_one_or_none()
             if invoice:
-                result3 = await db.execute(select(User).where(User.id == payment.user_id))
+                result3 = await db.execute(
+                    select(User).where(User.id == payment.user_id)
+                )
                 payer = result3.scalar_one_or_none()
                 if payer:
                     result4 = await db.execute(
@@ -216,7 +264,9 @@ async def paylink_callback(
 
         # Wallet top-up: credit the wallet
         else:
-            result_w = await db.execute(select(Wallet).where(Wallet.user_id == payment.user_id))
+            result_w = await db.execute(
+                select(Wallet).where(Wallet.user_id == payment.user_id)
+            )
             wallet = result_w.scalar_one_or_none()
             if wallet:
                 wallet.balance += payment.amount
@@ -267,7 +317,8 @@ async def get_payments_by_invoice(
     result = await db.execute(
         select(Payment)
         .where(Payment.invoice_id == invoice_id, Payment.deleted_at.is_(None))
-        .offset(skip).limit(limit)
+        .offset(skip)
+        .limit(limit)
     )
     return result.scalars().all()
 
@@ -283,7 +334,8 @@ async def get_my_payments(
         select(Payment)
         .where(Payment.user_id == current_user.id, Payment.deleted_at.is_(None))
         .order_by(Payment.created_at.desc())
-        .offset(skip).limit(limit)
+        .offset(skip)
+        .limit(limit)
     )
     return result.scalars().all()
 
@@ -352,7 +404,9 @@ async def pay_with_wallet(
             )
         )
         if usage_check.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="You have already used this promocode")
+            raise HTTPException(
+                status_code=400, detail="You have already used this promocode"
+            )
 
         base = {
             "order_total": invoice.full_amount,
@@ -398,13 +452,14 @@ async def pay_with_wallet(
             payment_date=datetime.now(timezone.utc),
             wallet_balance_before=balance_before,
         )
-        db.add(payment)
-        await db.commit()
-        await db.refresh(payment)
+         db.add(payment)
+         await db.commit()
+         await db.refresh(payment)
 
-        if invoice.order.conversation:
-            from websocket_events import emit_chat_message
-            from models import Message
+         if invoice.order.conversation:
+             from utils.websocket.websocket_events import emit_chat_message
+             from models import Message
+
             content = f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {payment_amount / 100:.2f} ريال"
             if coupon_used:
                 content += f"\n(تم تطبيق خصم: {discount_amount / 100:.2f} ريال)"
@@ -417,16 +472,25 @@ async def pay_with_wallet(
             db.add(msg)
             await db.commit()
             await db.refresh(msg)
-            await emit_chat_message(invoice.order.conversation.id, {
-                "id": msg.id, "conversation_id": msg.conversation_id,
-                "sender_id": msg.sender_id, "content": msg.content,
-                "message_type": msg.message_type, "sent_at": msg.sent_at.isoformat(),
-            }, db)
+            await emit_chat_message(
+                invoice.order.conversation.id,
+                {
+                    "id": msg.id,
+                    "conversation_id": msg.conversation_id,
+                    "sender_id": msg.sender_id,
+                    "content": msg.content,
+                    "message_type": msg.message_type,
+                    "sent_at": msg.sent_at.isoformat(),
+                },
+                db,
+            )
 
-        from websocket_events import emit_order_status_change
+from utils.websocket.websocket_events import emit_order_status_change
+
         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
 
         from tasks.email_tasks import send_invoice_email_task
+
         await send_invoice_email_task.kiq(invoice.id)
 
         return {
@@ -439,4 +503,6 @@ async def pay_with_wallet(
 
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Payment processing error. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="Payment processing error. Please try again."
+        )

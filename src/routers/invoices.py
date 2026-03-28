@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from database import get_db
+from utils.database.database import get_db
 from models import Invoice, Order, InvoiceStatus
 from schemas import CreateInvoice, InvoiceResponse
-from auth import get_current_user
+from utils.auth.auth import get_current_user
 import uuid
 import os
 import tempfile
@@ -24,8 +24,11 @@ from fastapi.responses import FileResponse
 
 router = APIRouter()
 
+
 @router.post("/", response_model=InvoiceResponse)
-async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends(get_db)):
+async def create_invoice(
+    invoice_data: CreateInvoice, db: AsyncSession = Depends(get_db)
+):
     """
     Create a new invoice for an order. Admin only endpoint.
     """
@@ -36,10 +39,14 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
         raise HTTPException(status_code=400, detail="Order not found")
 
     # Check if invoice already exists for this order
-    result = await db.execute(select(Invoice).where(Invoice.order_id == invoice_data.order_id))
+    result = await db.execute(
+        select(Invoice).where(Invoice.order_id == invoice_data.order_id)
+    )
     existing_invoice = result.scalar_one_or_none()
     if existing_invoice:
-        raise HTTPException(status_code=400, detail="Invoice already exists for this order")
+        raise HTTPException(
+            status_code=400, detail="Invoice already exists for this order"
+        )
 
     # Generate unique invoice ID
     result = await db.execute(select(Invoice))
@@ -59,7 +66,7 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
         due_date=invoice_data.due_date,
         tax_amount=invoice_data.tax_amount,
         discount_amount=invoice_data.discount_amount,
-        status=InvoiceStatus.NEW
+        status=InvoiceStatus.NEW,
     )
 
     db.add(new_invoice)
@@ -67,19 +74,24 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
     await db.refresh(new_invoice)
 
     # Update order status to indicate invoice is created
-    order.status = "invoice_created"  # You might want to add this status to your OrderStatus enum
+    order.status = (
+        "invoice_created"  # You might want to add this status to your OrderStatus enum
+    )
     await db.commit()
 
     # Emit order status change event
-    from websocket_events import emit_order_status_change
-    await emit_order_status_change(order.id, order.status)
+    from utils.websocket.websocket_events import emit_order_status_change
 
-    # Emit invoice creation event
-    from websocket_events import emit_invoice_created
-    await emit_invoice_created(new_invoice.id, new_invoice.order_id)
+     await emit_order_status_change(order.id, order.status)
+     
+     # Emit invoice creation event
+     from utils.websocket.websocket_events import emit_invoice_created
+     
+     await emit_invoice_created(new_invoice.id, new_invoice.order_id)
 
-    # Send chat message about invoice creation
-    from websocket_events import emit_chat_message
+     # Send chat message about invoice creation
+     from utils.websocket.websocket_events import emit_chat_message
+
     await emit_chat_message(
         conversation_id=None,  # Will be found by order
         sender_id=current_user.id,
@@ -90,18 +102,19 @@ async def create_invoice(invoice_data: CreateInvoice, db: AsyncSession = Depends
             "id": new_invoice.id,
             "invoice_id": new_invoice.invoice_id,
             "full_amount": new_invoice.full_amount,
-            "description": new_invoice.description
-        }
+            "description": new_invoice.description,
+        },
     )
 
     return new_invoice
+
 
 @router.post("/courier/create", response_model=InvoiceResponse)
 async def create_invoice_by_courier(
     invoice_data: CreateInvoice,
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Create a new invoice for an order by courier. Only assigned courier can create invoice.
@@ -119,10 +132,14 @@ async def create_invoice_by_courier(
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
     # Check if invoice already exists for this order
-    result = await db.execute(select(Invoice).where(Invoice.order_id == invoice_data.order_id))
+    result = await db.execute(
+        select(Invoice).where(Invoice.order_id == invoice_data.order_id)
+    )
     existing_invoice = result.scalar_one_or_none()
     if existing_invoice:
-        raise HTTPException(status_code=400, detail="Invoice already exists for this order")
+        raise HTTPException(
+            status_code=400, detail="Invoice already exists for this order"
+        )
 
     # Generate unique invoice ID
     result = await db.execute(select(Invoice))
@@ -143,7 +160,7 @@ async def create_invoice_by_courier(
         tax_amount=invoice_data.tax_amount,
         discount_amount=invoice_data.discount_amount,
         status=InvoiceStatus.NEW,
-        created_by_user_id=current_user.id  # Track who created the invoice
+        created_by_user_id=current_user.id,  # Track who created the invoice
     )
 
     db.add(new_invoice)
@@ -151,17 +168,19 @@ async def create_invoice_by_courier(
     await db.refresh(new_invoice)
 
     # Emit invoice creation event
-    from websocket_events import emit_invoice_created
+    from utils.websocket.websocket_events import emit_invoice_created
+
     await emit_invoice_created(new_invoice.id, new_invoice.order_id)
 
     return new_invoice
+
 
 @router.put("/courier/update/{invoice_id}", response_model=InvoiceResponse)
 async def update_invoice_by_courier(
     invoice_id: str,
     invoice_data: CreateInvoice,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Update an existing invoice by courier. Only the assigned courier can update the invoice.
@@ -199,8 +218,9 @@ async def update_invoice_by_courier(
     await db.commit()
     await db.refresh(invoice)
 
-    # Send chat message about invoice update
-    from websocket_events import emit_chat_message
+     # Send chat message about invoice update
+     from utils.websocket.websocket_events import emit_chat_message
+
     await emit_chat_message(
         conversation_id=None,  # Will be found by order
         sender_id=current_user.id,
@@ -211,11 +231,12 @@ async def update_invoice_by_courier(
             "id": invoice.id,
             "invoice_id": invoice.invoice_id,
             "full_amount": invoice.full_amount,
-            "description": invoice.description
-        }
+            "description": invoice.description,
+        },
     )
 
     return invoice
+
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
 async def get_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)):
@@ -229,8 +250,13 @@ async def get_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)):
 
     return invoice
 
+
 @router.get("/id/{invoice_db_id}", response_model=InvoiceResponse)
-async def get_invoice_by_id(invoice_db_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_invoice_by_id(
+    invoice_db_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Get invoice by database ID. Authenticated users can view their own invoices.
     """
@@ -240,15 +266,23 @@ async def get_invoice_by_id(invoice_db_id: int, current_user=Depends(get_current
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     # Check if the invoice belongs to the current user (through the order)
-    result = await db.execute(select(Order).where(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id))
+    result = await db.execute(
+        select(Order).where(
+            Order.id == invoice.order_id, Order.created_by_user_id == current_user.id
+        )
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=403, detail="Access denied")
 
     return invoice
 
-def delete_file_after_delay(file_path: str, delay_seconds: int = 600):  # 10 minutes = 600 seconds
+
+def delete_file_after_delay(
+    file_path: str, delay_seconds: int = 600
+):  # 10 minutes = 600 seconds
     """Delete a file after a specified delay"""
+
     def delete_file():
         try:
             if os.path.exists(file_path):
@@ -258,6 +292,7 @@ def delete_file_after_delay(file_path: str, delay_seconds: int = 600):  # 10 min
 
     timer = Timer(delay_seconds, delete_file)
     timer.start()
+
 
 def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> BytesIO:
     """Generate PDF invoice with proper Arabic text"""
@@ -269,14 +304,14 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
 
     # Create custom styles
     title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
+        "CustomTitle",
+        parent=styles["Heading1"],
         fontSize=24,
         spaceAfter=30,
         alignment=1,  # Center alignment
     )
 
-    normal_style = styles['Normal']
+    normal_style = styles["Normal"]
     normal_style.fontSize = 12
 
     # Build the PDF content
@@ -287,7 +322,7 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
     content.append(Spacer(1, 12))
 
     # Company info
-    content.append(Paragraph("Hadiyati Services", styles['Heading2']))
+    content.append(Paragraph("Hadiyati Services", styles["Heading2"]))
     content.append(Spacer(1, 12))
 
     # Invoice details
@@ -302,17 +337,21 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
     if invoice.description:
         invoice_data.append(["Description:", invoice.description])
 
-    invoice_table = Table(invoice_data, colWidths=[2*inch, 4*inch])
-    invoice_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
+    invoice_table = Table(invoice_data, colWidths=[2 * inch, 4 * inch])
+    invoice_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ]
+        )
+    )
     content.append(invoice_table)
     content.append(Spacer(1, 20))
 
@@ -324,17 +363,21 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
         ["Tax (15%)", "1", f"{(invoice.order_only_price * 0.15):.2f} SAR"],
     ]
 
-    items_table = Table(items_data, colWidths=[3.5*inch, 1*inch, 2*inch])
-    items_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
+    items_table = Table(items_data, colWidths=[3.5 * inch, 1 * inch, 2 * inch])
+    items_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ]
+        )
+    )
     content.append(items_table)
     content.append(Spacer(1, 20))
 
@@ -343,15 +386,19 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
         ["Total Amount:", f"{invoice.full_amount:.2f} SAR"],
     ]
 
-    total_table = Table(total_data, colWidths=[4*inch, 2*inch])
-    total_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-    ]))
+    total_table = Table(total_data, colWidths=[4 * inch, 2 * inch])
+    total_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 12),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+            ]
+        )
+    )
     content.append(total_table)
 
     # Footer
@@ -363,19 +410,24 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
     buffer.seek(0)
     return buffer
 
+
 @router.get("/order/{order_id}/pdf")
 async def download_invoice_pdf(
     order_id: int,
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Generate and download PDF invoice for an order.
     Creates a temporary file that auto-deletes after 10 minutes.
     """
     # Check if order exists and belongs to current user
-    result = await db.execute(select(Order).where(Order.id == order_id, Order.created_by_user_id == current_user.id))
+    result = await db.execute(
+        select(Order).where(
+            Order.id == order_id, Order.created_by_user_id == current_user.id
+        )
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or access denied")
@@ -394,7 +446,7 @@ async def download_invoice_pdf(
     temp_filepath = os.path.join(temp_dir, temp_filename)
 
     # Write PDF to temporary file
-    with open(temp_filepath, 'wb') as f:
+    with open(temp_filepath, "wb") as f:
         f.write(pdf_buffer.getvalue())
 
     # Schedule file deletion after 10 minutes
@@ -403,16 +455,17 @@ async def download_invoice_pdf(
     # Return file response
     return FileResponse(
         path=temp_filepath,
-        media_type='application/pdf',
-        filename=f"{invoice.invoice_id}.pdf"
+        media_type="application/pdf",
+        filename=f"{invoice.invoice_id}.pdf",
     )
+
 
 @router.get("/id/{invoice_db_id}/pdf")
 async def download_invoice_pdf_by_id(
     invoice_db_id: int,
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Generate and download PDF invoice by database ID.
@@ -425,7 +478,11 @@ async def download_invoice_pdf_by_id(
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     # Check if the invoice belongs to the current user (through the order)
-    result = await db.execute(select(Order).where(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id))
+    result = await db.execute(
+        select(Order).where(
+            Order.id == invoice.order_id, Order.created_by_user_id == current_user.id
+        )
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -439,7 +496,7 @@ async def download_invoice_pdf_by_id(
     temp_filepath = os.path.join(temp_dir, temp_filename)
 
     # Write PDF to temporary file
-    with open(temp_filepath, 'wb') as f:
+    with open(temp_filepath, "wb") as f:
         f.write(pdf_buffer.getvalue())
 
     # Schedule file deletion after 10 minutes
@@ -448,17 +505,26 @@ async def download_invoice_pdf_by_id(
     # Return file response
     return FileResponse(
         path=temp_filepath,
-        media_type='application/pdf',
-        filename=f"{invoice.invoice_id}.pdf"
+        media_type="application/pdf",
+        filename=f"{invoice.invoice_id}.pdf",
     )
 
+
 @router.get("/order/{order_id}", response_model=InvoiceResponse)
-async def get_invoice_by_order(order_id: int, current_user = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_invoice_by_order(
+    order_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Get invoice by order ID. Authenticated users can view their own invoices.
     """
     # Check if order exists and belongs to current user
-    result = await db.execute(select(Order).where(Order.id == order_id, Order.created_by_user_id == current_user.id))
+    result = await db.execute(
+        select(Order).where(
+            Order.id == order_id, Order.created_by_user_id == current_user.id
+        )
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or access denied")
@@ -476,7 +542,7 @@ async def verify_coupon(
     coupon_code: str = Form(...),
     invoice_id: int = Form(...),
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Verify coupon code and calculate discount for an invoice.
@@ -488,7 +554,11 @@ async def verify_coupon(
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     # Check if invoice belongs to current user
-    result = await db.execute(select(Order).where(Order.id == invoice.order_id, Order.created_by_user_id == current_user.id))
+    result = await db.execute(
+        select(Order).where(
+            Order.id == invoice.order_id, Order.created_by_user_id == current_user.id
+        )
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -498,7 +568,9 @@ async def verify_coupon(
         raise HTTPException(status_code=400, detail="Invoice is already paid")
 
     # Find the coupon
-    result = await db.execute(select(Promocode).where(Promocode.code == coupon_code.upper()))
+    result = await db.execute(
+        select(Promocode).where(Promocode.code == coupon_code.upper())
+    )
     coupon = result.scalar_one_or_none()
     if not coupon:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
@@ -513,7 +585,10 @@ async def verify_coupon(
 
     # Check minimum order value
     if invoice.full_amount < coupon.minimum_order_value:
-        raise HTTPException(status_code=400, detail=f"Minimum order value for this coupon is {coupon.minimum_order_value}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum order value for this coupon is {coupon.minimum_order_value}",
+        )
 
     # Calculate discount
     discount_amount = 0
@@ -541,5 +616,5 @@ async def verify_coupon(
         "coupon_id": coupon.id,
         "discount_amount": discount_amount,
         "final_amount": final_amount,
-        "description": coupon.description or f"{coupon.percentage}% discount"
+        "description": coupon.description or f"{coupon.percentage}% discount",
     }
