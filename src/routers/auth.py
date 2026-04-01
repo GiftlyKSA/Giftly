@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.database.database import get_db
 from models import User, Wallet, CustomerProfile, CourierProfile
+from models.enums import UserRole
 from schemas import SendOTP, OTPVerify, Token, UpdateUserProfile, RefreshTokenRequest
 from utils.auth.auth import (
     create_access_token,
@@ -80,7 +81,6 @@ async def send_otp(
     otp = generate_otp()
 
     if user:
-        user.otp = None
         user.otp = otp
         user.otp_created_at = datetime.now(timezone.utc)
         await db.commit()
@@ -131,7 +131,7 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
 
     user.otp = None  # Consume OTP
 
-    if user.role == "Courier":
+    if user.role == UserRole.COURIER:
         if user.is_verified:
             access_token, refresh_token = await create_tokens(
                 db, user, otp_data.device_id
@@ -182,7 +182,7 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
             }
         else:
             raise HTTPException(status_code=400, detail="حسابك لم يتم التحقق منه بعد")
-    else:
+    elif user.role == UserRole.CUSTOMER:
         if user.is_verified:
             access_token, refresh_token = await create_tokens(
                 db, user, otp_data.device_id
@@ -452,7 +452,7 @@ async def update_push_token(
     if not push_token:
         raise HTTPException(status_code=400, detail="push_token is required")
 
-    if current_user.role == "Customer":
+    if current_user.role == UserRole.CUSTOMER:
         if current_user.customer_profile:
             current_user.customer_profile.push_token = push_token
         else:

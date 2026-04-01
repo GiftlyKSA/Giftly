@@ -1,11 +1,41 @@
-from fastapi import FastAPI, Request, HTTPException, status, WebSocket, WebSocketDisconnect, Depends
+from fastapi import (
+    FastAPI,
+    Request,
+    HTTPException,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+    Depends,
+)
 from fastapi.responses import RedirectResponse
 from database import engine, Base, AsyncSessionLocal
-from routers import auth, admin, orders, cities, invoices, chat, wallets, payments, promocodes, events
+from routers import (
+    auth,
+    admin,
+    orders,
+    cities,
+    invoices,
+    chat,
+    wallets,
+    payments,
+    promocodes,
+    events,
+)
 from routers import couriers
 from sqladmin import Admin
-from admin import (UserAdmin, AdminAdmin, CityAdmin, OrderAdmin, InvoiceAdmin, ConversationAdmin,
-                   MessageAdmin, WalletAdmin, PaymentAdmin, PromocodeAdmin, CourierReviewAdmin)
+from admin import (
+    UserAdmin,
+    AdminAdmin,
+    CityAdmin,
+    OrderAdmin,
+    InvoiceAdmin,
+    ConversationAdmin,
+    MessageAdmin,
+    WalletAdmin,
+    PaymentAdmin,
+    PromocodeAdmin,
+    CourierReviewAdmin,
+)
 import base64
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +79,7 @@ from starlette.datastructures import URL
 app.add_middleware(LastActivityMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 
+
 # Security headers middleware
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -57,11 +88,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = (
+            f"max-age={settings.hsts_max_age_seconds}; includeSubDomains"
+        )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
 
+
 app.add_middleware(SecurityHeadersMiddleware)
+
 
 # Force HTTPS for all requests
 class ForceHTTPSMiddleware(BaseHTTPMiddleware):
@@ -70,11 +105,14 @@ class ForceHTTPSMiddleware(BaseHTTPMiddleware):
         if request.url.scheme == "http":
             # Build HTTPS URL
             https_url = str(request.url).replace("http://", "https://", 1)
-            return RedirectResponse(url=https_url, status_code=status.HTTP_301_MOVED_PERMANENTLY)
-        
+            return RedirectResponse(
+                url=https_url, status_code=status.HTTP_301_MOVED_PERMANENTLY
+            )
+
         # For HTTPS requests, continue normally
         response = await call_next(request)
         return response
+
 
 app.add_middleware(ForceHTTPSMiddleware)
 
@@ -100,6 +138,7 @@ app.include_router(couriers.router, prefix="/couriers", tags=["couriers"])
 # Admin middleware (Basic auth gate for /admin/* routes)
 # ---------------------------------------------------------------------------
 
+
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/admin"):
@@ -118,10 +157,14 @@ async def admin_auth_middleware(request: Request, call_next):
 
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(Admin).where(Admin.username == username, Admin.is_active == True)
+                    select(Admin).where(
+                        Admin.username == username, Admin.is_active == True
+                    )
                 )
                 admin = result.scalar_one_or_none()
-                if not admin or not bcrypt.checkpw(password.encode("utf-8"), admin.password_hash.encode("utf-8")):
+                if not admin or not bcrypt.checkpw(
+                    password.encode("utf-8"), admin.password_hash.encode("utf-8")
+                ):
                     return JSONResponse(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         content={"detail": "Invalid credentials"},
@@ -161,6 +204,7 @@ sqladmin.add_view(CourierReviewAdmin)
 # Misc endpoints
 # ---------------------------------------------------------------------------
 
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the API"}
@@ -180,6 +224,7 @@ async def test_scheme(request: Request):
 # WebSocket helpers
 # ---------------------------------------------------------------------------
 
+
 async def get_user_from_token(token: str) -> User:
     """Extract user from JWT token for WebSocket authentication (stateless)."""
     credentials_exception = HTTPException(
@@ -192,7 +237,10 @@ async def get_user_from_token(token: str) -> User:
         if sub is None:
             raise credentials_exception
         if payload.get("type") == "refresh":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not allowed")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token not allowed",
+            )
         user_id = int(sub)
     except (JWTError, ValueError):
         raise credentials_exception
@@ -210,6 +258,7 @@ async def get_user_from_token(token: str) -> User:
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, token: str):
     """
@@ -226,11 +275,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
         # Courier room join: only approved + available couriers
         if user.role == UserRole.COURIER.value:
             from models import CourierProfile
+
             profile_record = await db.execute(
                 select(CourierProfile).where(CourierProfile.user_id == user.id)
             )
             profile = profile_record.scalar_one_or_none()
-            if profile and profile.city_id and profile.is_approved and profile.is_available:
+            if (
+                profile
+                and profile.city_id
+                and profile.is_approved
+                and profile.is_available
+            ):
                 await manager.join_room(user.id, f"couriers_city_{profile.city_id}")
 
         while True:
@@ -241,13 +296,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 room = data.get("room")
                 if room:
                     await manager.join_room(user.id, room)
-                    await manager.send_to_user(user.id, {"action": "joined_room", "room": room})
+                    await manager.send_to_user(
+                        user.id, {"action": "joined_room", "room": room}
+                    )
 
             elif action == "leave_room":
                 room = data.get("room")
                 if room:
                     await manager.leave_room(user.id, room)
-                    await manager.send_to_user(user.id, {"action": "left_room", "room": room})
+                    await manager.send_to_user(
+                        user.id, {"action": "left_room", "room": room}
+                    )
 
             elif action == "leave_all_rooms":
                 manager.disconnect(user.id)
@@ -262,14 +321,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                     if len(message_content) > 1000:
                         message_content = message_content[:1000] + "..."
                     # Remove any null bytes or control characters that could cause issues
-                    message_content = ''.join(char for char in message_content if ord(char) >= 32 or char in '\n\r\t')
+                    message_content = "".join(
+                        char
+                        for char in message_content
+                        if ord(char) >= 32 or char in "\n\r\t"
+                    )
                     try:
                         conversation_id = int(room.split("_")[1])
                         conv_result = await db.execute(
-                            select(Conversation).where(Conversation.id == conversation_id)
+                            select(Conversation).where(
+                                Conversation.id == conversation_id
+                            )
                         )
                         conversation = conv_result.scalar_one_or_none()
-                        if conversation and user.id in [conversation.customer_id, conversation.courier_id]:
+                        if conversation and user.id in [
+                            conversation.customer_id,
+                            conversation.courier_id,
+                        ]:
                             new_message = Message(
                                 conversation_id=conversation_id,
                                 sender_id=user.id,
@@ -285,26 +353,31 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                             await db.commit()
                             await db.refresh(new_message)
 
-                            await manager.broadcast_to_room({
-                                "event": "chat_message",
-                                "room": room,
-                                "data": {
-                                    "id": new_message.id,
-                                    "conversation_id": new_message.conversation_id,
-                                    "sender_id": new_message.sender_id,
-                                    "content": new_message.content,
-                                    "message_type": new_message.message_type,
-                                    "sent_at": new_message.sent_at.isoformat(),
-                                    "invoice_description": new_message.invoice_description,
-                                    "invoice_gift_price": new_message.invoice_gift_price,
-                                    "invoice_service_fee": new_message.invoice_service_fee,
-                                    "invoice_delivery_fee": new_message.invoice_delivery_fee,
-                                    "invoice_total": new_message.invoice_total,
-                                }
-                            }, room, user.id)
+                            await manager.broadcast_to_room(
+                                {
+                                    "event": "chat_message",
+                                    "room": room,
+                                    "data": {
+                                        "id": new_message.id,
+                                        "conversation_id": new_message.conversation_id,
+                                        "sender_id": new_message.sender_id,
+                                        "content": new_message.content,
+                                        "message_type": new_message.message_type,
+                                        "sent_at": new_message.sent_at.isoformat(),
+                                        "invoice_description": new_message.invoice_description,
+                                        "invoice_gift_price": new_message.invoice_gift_price,
+                                        "invoice_service_fee": new_message.invoice_service_fee,
+                                        "invoice_delivery_fee": new_message.invoice_delivery_fee,
+                                        "invoice_total": new_message.invoice_total,
+                                    },
+                                },
+                                room,
+                                user.id,
+                            )
                     except Exception as e:
                         # Log error internally without exposing details to users
                         import logging
+
                         logging.error(f"WebSocket error sending chat message: {str(e)}")
 
     except WebSocketDisconnect:
@@ -313,6 +386,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
     except Exception as e:
         # Log error internally without exposing details to users
         import logging
+
         logging.error(f"WebSocket error: {str(e)}")
         if user:
             manager.disconnect(user.id)

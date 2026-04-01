@@ -19,13 +19,6 @@ from config import settings
 
 logger = logging.getLogger("api.request")
 
-# One-time basic config if no handler is set yet
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -41,7 +34,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     auth.split(" ", 1)[1],
                     settings.secret_key,
                     algorithms=["HS256"],
-                    options={"verify_exp": False},   # just reading claims, not validating here
+                    options={
+                        "verify_exp": False
+                    },  # just reading claims, not validating here
                 )
                 if payload.get("type") != "refresh":
                     user_id = payload.get("sub")
@@ -51,12 +46,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
-        logger.info(json.dumps({
-            "request_id": request_id,
-            "method": request.method,
-            "path": request.url.path,
-            "status_code": response.status_code,
-            "duration_ms": duration_ms,
-            "user_id": user_id,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                    "user_id": user_id,
+                }
+            )
+        )
         return response

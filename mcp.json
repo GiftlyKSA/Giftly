@@ -1,0 +1,10 @@
+{
+  "github": {
+    "type": "local",
+    "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
+    "enabled": true,
+    "environment": {
+      "GITHUB_PERSONAL_ACCESS_TOKEN": "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"
+    }
+  }
+}
