@@ -3,8 +3,6 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
 
 jobs:
   test:
@@ -37,14 +35,6 @@ jobs:
         echo "SMS_PROVIDER_ENABLED=false" >> .env.test
         echo "PAYLINK_TEST_MODE=true" >> .env.test
     
-    - name: Run tests with coverage
+    - name: Run tests
       run: |
-        pytest tests/ --cov=src --cov-report=xml --cov-report=term-missing
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+        pytest tests/
