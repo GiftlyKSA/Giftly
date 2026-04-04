@@ -1,27 +1,30 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+
+from django import db
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import func
-from sqlalchemy import select
-from utils.database.database import get_db
+
 from models import (
-    Payment,
     Invoice,
-    User,
-    Wallet,
+    InvoiceStatus,
     Order,
     OrderStatus,
-    InvoiceStatus,
-    PaymentStatus,
+    Payment,
     PaymentMethod,
+    PaymentStatus,
     Promocode,
     PromocodeUsage,
+    User,
+    Wallet,
 )
-from schemas import PaymentResponse, CreatePayment
-from utils.auth.auth import get_current_user
 from models.enums import PaymentMethod as PaymentMethodEnum
+from schemas import CreatePayment, PaymentResponse
+from utils.auth.auth import get_current_user
+from utils.database.database import get_db
 
 router = APIRouter()
 
@@ -41,8 +44,8 @@ async def _mark_invoice_paid(
     await db.commit()
 
     if invoice.order.conversation:
-        from utils.websocket.websocket_events import emit_chat_message
         from models import Message
+        from utils.websocket.websocket_events import emit_chat_message
 
         msg = Message(
             conversation_id=invoice.order.conversation.id,
@@ -63,12 +66,12 @@ async def _mark_invoice_paid(
                 "message_type": msg.message_type,
                 "sent_at": msg.sent_at.isoformat(),
             },
-                 db,
-             )
- 
-         from utils.websocket.websocket_events import emit_order_status_change
- 
-         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
+            db,
+        )
+
+        from utils.websocket.websocket_events import emit_order_status_change
+
+        await emit_order_status_change(invoice.order.id, invoice.order.status.value)
 
 
 # ---------------------------------------------------------------------------
@@ -452,40 +455,42 @@ async def pay_with_wallet(
             payment_date=datetime.now(timezone.utc),
             wallet_balance_before=balance_before,
         )
-         db.add(payment)
-         await db.commit()
-         await db.refresh(payment)
+        db.add(payment)
+        await db.commit()
+        await db.refresh(payment)
 
-         if invoice.order.conversation:
-             from utils.websocket.websocket_events import emit_chat_message
-             from models import Message
+        if invoice.order.conversation:
+            from models import Message
+            from utils.websocket.websocket_events import emit_chat_message
 
-            content = f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {payment_amount / 100:.2f} ريال"
-            if coupon_used:
-                content += f"\n(تم تطبيق خصم: {discount_amount / 100:.2f} ريال)"
-            msg = Message(
-                conversation_id=invoice.order.conversation.id,
-                sender_id=current_user.id,
-                content=content,
-                message_type="text",
-            )
-            db.add(msg)
-            await db.commit()
-            await db.refresh(msg)
-            await emit_chat_message(
-                invoice.order.conversation.id,
-                {
-                    "id": msg.id,
-                    "conversation_id": msg.conversation_id,
-                    "sender_id": msg.sender_id,
-                    "content": msg.content,
-                    "message_type": msg.message_type,
-                    "sent_at": msg.sent_at.isoformat(),
-                },
-                db,
-            )
+        content = (
+            f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {payment_amount / 100:.2f} ريال"
+        )
+        if coupon_used:
+            content += f"\n(تم تطبيق خصم: {discount_amount / 100:.2f} ريال)"
+        msg = Message(
+            conversation_id=invoice.order.conversation.id,
+            sender_id=current_user.id,
+            content=content,
+            message_type="text",
+        )
+        db.add(msg)
+        await db.commit()
+        await db.refresh(msg)
+        await emit_chat_message(
+            invoice.order.conversation.id,
+            {
+                "id": msg.id,
+                "conversation_id": msg.conversation_id,
+                "sender_id": msg.sender_id,
+                "content": msg.content,
+                "message_type": msg.message_type,
+                "sent_at": msg.sent_at.isoformat(),
+            },
+            db,
+        )
 
-from utils.websocket.websocket_events import emit_order_status_change
+        from utils.websocket.websocket_events import emit_order_status_change
 
         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
 

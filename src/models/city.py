@@ -1,9 +1,7 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Text, Enum, UniqueConstraint, Index, text, select
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 from database import Base
-from .enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
-from sqlalchemy import event
+from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy.orm import relationship
+
 
 class City(Base):
     __tablename__ = "cities"
@@ -13,6 +11,7 @@ class City(Base):
 
     def __str__(self):
         return self.name
+
     icon = Column(String, nullable=True)
     active = Column(Boolean, default=True)
 

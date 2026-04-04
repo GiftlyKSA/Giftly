@@ -1,57 +1,56 @@
-from fastapi import (
-    FastAPI,
-    Request,
-    HTTPException,
-    status,
-    WebSocket,
-    WebSocketDisconnect,
-    Depends,
-)
-from fastapi.responses import RedirectResponse
-from database import engine, Base, AsyncSessionLocal
-from routers import (
-    auth,
-    admin,
-    orders,
-    cities,
-    invoices,
-    chat,
-    wallets,
-    payments,
-    promocodes,
-    events,
-)
-from routers import couriers
-from sqladmin import Admin
+import base64
+import os
+from contextlib import asynccontextmanager
+
+import bcrypt
 from admin import (
-    UserAdmin,
     AdminAdmin,
     CityAdmin,
-    OrderAdmin,
-    InvoiceAdmin,
     ConversationAdmin,
+    CourierReviewAdmin,
+    InvoiceAdmin,
     MessageAdmin,
-    WalletAdmin,
+    OrderAdmin,
     PaymentAdmin,
     PromocodeAdmin,
-    CourierReviewAdmin,
+    UserAdmin,
+    WalletAdmin,
 )
-import base64
-import bcrypt
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from models import User, Admin, Conversation, Message
-from fastapi.responses import JSONResponse
-import os
-from jose import JWTError, jwt
 from config import settings
+from database import AsyncSessionLocal, Base, engine
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from fastapi.responses import JSONResponse, RedirectResponse
+from jose import JWTError, jwt
+from sqladmin import Admin
+from sqlalchemy import select
 from websocket_manager import manager
-from contextlib import asynccontextmanager
-from models.enums import UserRole
-from middleware.logging import RequestLoggingMiddleware
-from middleware.activity import LastActivityMiddleware
-from tasks.broker import broker
+
 import tasks.email_tasks  # noqa: F401 — registers task decorators with the broker
+from middleware.activity import LastActivityMiddleware
+from middleware.logging import RequestLoggingMiddleware
+from models import Admin, Conversation, Message, User
+from models.enums import UserRole
+from routers import (
+    admin,
+    auth,
+    chat,
+    cities,
+    couriers,
+    events,
+    invoices,
+    orders,
+    payments,
+    promocodes,
+    wallets,
+)
+from tasks.broker import broker
 
 print(f"Current working directory: {os.getcwd()}")
 print(f"Database URL: {engine.url}")
@@ -72,8 +71,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.datastructures import URL
-
 
 # Logging + activity tracking
 app.add_middleware(LastActivityMiddleware)
@@ -396,6 +393,3 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
             pass
     finally:
         await db.close()
-
-
-from websocket_events import emit_order_status_change, emit_chat_message  # noqa: E402 — keep at end

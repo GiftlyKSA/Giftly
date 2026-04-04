@@ -1,31 +1,20 @@
+from database import Base
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
     Integer,
     String,
-    Boolean,
-    DateTime,
-    Date,
-    ForeignKey,
     Text,
-    Enum,
-    UniqueConstraint,
-    Index,
     text,
-    select,
 )
-from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database import Base
-from .enums import (
-    OrderStatus,
-    InvoiceStatus,
-    PaymentMethod,
-    PaymentStatus,
-    DepositRequestStatus,
-    UserRole,
-    ConversationStatus,
-)
-from sqlalchemy import event
+from sqlalchemy.sql import func
+
+from .enums import OrderStatus
 
 
 class Order(Base):

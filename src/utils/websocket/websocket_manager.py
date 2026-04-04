@@ -1,5 +1,6 @@
-from fastapi import WebSocket
 from typing import Dict, Set
+
+from fastapi import WebSocket
 
 
 class ConnectionManager:
@@ -36,7 +37,9 @@ class ConnectionManager:
             if not self.rooms[room]:
                 del self.rooms[room]
 
-    async def broadcast_to_room(self, message: dict, room: str, exclude_user_id: int = None):
+    async def broadcast_to_room(
+        self, message: dict, room: str, exclude_user_id: int = None
+    ):
         if room in self.rooms:
             # Snapshot the set to avoid mutation-while-iterating bugs
             for user_id in list(self.rooms.get(room, [])):
@@ -56,7 +59,11 @@ class ConnectionManager:
             except Exception:
                 # Connection might be closed, remove it
                 self.active_connections.pop(user_id, None)
-                rooms_to_delete = [r for r, uids in self.rooms.items() if not (uids.discard(user_id) or uids)]
+                rooms_to_delete = [
+                    r
+                    for r, uids in self.rooms.items()
+                    if not (uids.discard(user_id) or uids)
+                ]
                 for room in rooms_to_delete:
                     self.rooms.pop(room, None)
 

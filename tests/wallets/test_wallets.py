@@ -7,11 +7,10 @@ Covers:
 - POST /wallets/request-deposit (couriers only)
 - Admin wallet charge endpoint
 """
+
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from models import Wallet
 
 pytestmark = pytest.mark.asyncio
 
@@ -19,6 +18,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 # GET /wallets/my-wallet
 # ---------------------------------------------------------------------------
+
 
 async def test_get_my_wallet(client, customer_headers, customer):
     resp = await client.get("/wallets/my-wallet", headers=customer_headers)
@@ -35,9 +35,12 @@ async def test_get_wallet_requires_auth(client):
 # POST /wallets/initiate-charge
 # ---------------------------------------------------------------------------
 
+
 @patch("paylink_client.PaylinkClient.__aenter__", new_callable=AsyncMock)
 @patch("paylink_client.PaylinkClient.__aexit__", new_callable=AsyncMock)
-async def test_initiate_charge_below_minimum(mock_exit, mock_enter, client, customer_headers):
+async def test_initiate_charge_below_minimum(
+    mock_exit, mock_enter, client, customer_headers
+):
     resp = await client.post(
         "/wallets/initiate-charge",
         json={"amount_sar": 5},
@@ -66,6 +69,7 @@ async def test_initiate_charge_requires_auth(client):
 # ---------------------------------------------------------------------------
 # POST /wallets/request-deposit (courier payout request)
 # ---------------------------------------------------------------------------
+
 
 async def test_request_deposit_by_courier(client, courier_headers, courier):
     resp = await client.post(

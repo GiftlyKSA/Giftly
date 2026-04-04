@@ -1,20 +1,30 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Text, Enum, UniqueConstraint, Index, text, select
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 from database import Base
-from .enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
-from sqlalchemy import event
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy.orm import relationship
+
 
 class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
-    sender_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # Nullable for system messages
+    conversation_id = Column(
+        Integer, ForeignKey("conversations.id"), nullable=False, index=True
+    )
+    sender_id = Column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )  # Nullable for system messages
     content = Column(Text, nullable=False)
-    sent_at = Column(DateTime(timezone=True), nullable=False, server_default=text('CURRENT_TIMESTAMP'))
-    message_type = Column(String(20), nullable=False, default='text')  # 'text', 'invoice', 'image', 'video', 'system'
-    media_type = Column(String(20), nullable=True)  # 'image' or 'video' when message_type is 'image' or 'video'
+    sent_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    message_type = Column(
+        String(20), nullable=False, default="text"
+    )  # 'text', 'invoice', 'image', 'video', 'system'
+    media_type = Column(
+        String(20), nullable=True
+    )  # 'image' or 'video' when message_type is 'image' or 'video'
     # Invoice specific fields
     invoice_description = Column(Text, nullable=True)
     invoice_gift_price = Column(Integer, nullable=True)  # in cents/halaym
@@ -30,8 +40,8 @@ class Message(Base):
     sender = relationship("User")
 
     __table_args__ = (
-        Index('idx_message_conversation', 'conversation_id', 'sent_at'),
-        Index('idx_message_sender', 'sender_id', 'sent_at'),
-        Index('idx_message_type', 'message_type', 'sent_at'),
-        Index('idx_message_media_type', 'media_type'),
+        Index("idx_message_conversation", "conversation_id", "sent_at"),
+        Index("idx_message_sender", "sender_id", "sent_at"),
+        Index("idx_message_type", "message_type", "sent_at"),
+        Index("idx_message_media_type", "media_type"),
     )

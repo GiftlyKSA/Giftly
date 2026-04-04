@@ -1,19 +1,28 @@
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from database import get_db
-from models import Wallet, DepositRequest, DepositRequestStatus, Payment, PaymentMethod, PaymentStatus
-from schemas import WalletResponse, RequestWalletDeposit
 from auth import get_current_user
 from config import settings
+from database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models import (
+    DepositRequest,
+    DepositRequestStatus,
+    Payment,
+    PaymentMethod,
+    PaymentStatus,
+    Wallet,
+)
+from schemas import RequestWalletDeposit, WalletResponse
 from utils.clients.paylink import PaylinkClient
 
 router = APIRouter()
 
 
 @router.get("/my-wallet", response_model=WalletResponse)
-async def get_my_wallet(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_my_wallet(
+    current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
     wallet = result.scalar_one_or_none()
     if not wallet:
@@ -50,7 +59,7 @@ async def initiate_wallet_charge(
         raise HTTPException(status_code=404, detail="Wallet not found")
 
     new_payment = Payment(
-        invoice_id=None,          # wallet top-up, no invoice
+        invoice_id=None,  # wallet top-up, no invoice
         user_id=current_user.id,
         amount=amount_halaym,
         payment_method=PaymentMethod.CREDIT_CARD,
@@ -61,20 +70,24 @@ async def initiate_wallet_charge(
     await db.refresh(new_payment)
 
     try:
-        async with PaylinkClient(settings.paylink_api_key, settings.paylink_test_mode) as paylink:
-            response = await paylink.create_order({
-                "amount": float(amount_sar),
-                "currency": "SAR",
-                "description": f"Wallet top-up for user {current_user.id}",
-                "customer": {
-                    "name": current_user.name or "Customer",
-                    "email": current_user.email or "",
-                    "phone": current_user.phone_number,
-                },
-                "orderNumber": str(new_payment.id),
-                "callBackUrl": settings.paylink_callback_url,
-                "returnUrl": settings.paylink_return_url,
-            })
+        async with PaylinkClient(
+            settings.paylink_api_key, settings.paylink_test_mode
+        ) as paylink:
+            response = await paylink.create_order(
+                {
+                    "amount": float(amount_sar),
+                    "currency": "SAR",
+                    "description": f"Wallet top-up for user {current_user.id}",
+                    "customer": {
+                        "name": current_user.name or "Customer",
+                        "email": current_user.email or "",
+                        "phone": current_user.phone_number,
+                    },
+                    "orderNumber": str(new_payment.id),
+                    "callBackUrl": settings.paylink_callback_url,
+                    "returnUrl": settings.paylink_return_url,
+                }
+            )
     except Exception as e:
         # Roll back the pending payment if gateway call fails
         new_payment.status = PaymentStatus.FAILED
@@ -103,7 +116,9 @@ async def request_wallet_deposit(
 ):
     """Request a payout from courier wallet balance. Requires admin approval."""
     if current_user.role != "Courier":
-        raise HTTPException(status_code=403, detail="Only couriers can request wallet deposits")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can request wallet deposits"
+        )
 
     result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
     wallet = result.scalar_one_or_none()

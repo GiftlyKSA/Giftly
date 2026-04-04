@@ -1,19 +1,45 @@
+import mimetypes
+import traceback
 from datetime import datetime, time, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, File, UploadFile
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, desc, update
-import traceback
-from utils.database.database import get_db
-from models import (Order, City, User, CourierBalanceAddition,
-                    Invoice, Wallet, Payment, CourierProfile, OrderImage)
-from models.enums import OrderStatus, InvoiceStatus, PaymentMethod
-from schemas import CreateOrder, OrderResponse, CancelOrderRequest, AssignOrderRequest
+
+from models import (
+    City,
+    CourierBalanceAddition,
+    CourierProfile,
+    Invoice,
+    Order,
+    OrderImage,
+    Payment,
+    User,
+    Wallet,
+)
+from models.enums import (
+    ConversationStatus,
+    ImageType,
+    InvoiceStatus,
+    OrderStatus,
+    PaymentMethod,
+    UserRole,
+)
+from schemas import AssignOrderRequest, CancelOrderRequest, CreateOrder, OrderResponse
 from utils.auth.auth import get_current_user
-from utils.websocket.websocket_events import emit_order_status_change
 from utils.clients.storage_client import upload_image
-from models.enums import ImageType, UserRole, ConversationStatus
-import mimetypes
+from utils.database.database import get_db
+from utils.websocket.websocket_events import emit_order_status_change
 
 router = APIRouter()
 
@@ -27,7 +53,7 @@ async def create_order(
     image2: UploadFile = File(None),
     image3: UploadFile = File(None),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Create a new order with optional image uploads. Only authenticated users can create orders.
@@ -48,15 +74,25 @@ async def create_order(
     for i, img in enumerate(images, 1):
         if img is not None:
             if img.size > 15 * 1024 * 1024:
-                raise HTTPException(status_code=400, detail=f"Image {i} exceeds 15MB size limit")
+                raise HTTPException(
+                    status_code=400, detail=f"Image {i} exceeds 15MB size limit"
+                )
 
-            allowed_mime_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
+            allowed_mime_types = [
+                "image/jpeg",
+                "image/png",
+                "image/gif",
+                "image/webp",
+                "image/svg+xml",
+            ]
             if img.content_type not in allowed_mime_types:
-                file_ext = img.filename.split('.')[-1].lower() if '.' in img.filename else ''
-                if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']:
+                file_ext = (
+                    img.filename.split(".")[-1].lower() if "." in img.filename else ""
+                )
+                if file_ext not in ["jpg", "jpeg", "png", "gif", "webp", "svg"]:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Image {i}: Only image files are allowed (JPEG, PNG, GIF, WebP, SVG)"
+                        detail=f"Image {i}: Only image files are allowed (JPEG, PNG, GIF, WebP, SVG)",
                     )
             uploaded_images.append((i, img))
 
@@ -82,13 +118,15 @@ async def create_order(
                 user_id=current_user.id,
                 username=current_user.name or f"user_{current_user.id}",
                 image_type=ImageType.ORDER,
-                image=img_file
+                image=img_file,
             )
             image_urls[f"image{img_num}_url"] = result["url"]
         except Exception as e:
             await db.delete(new_order)
             await db.commit()
-            raise HTTPException(status_code=500, detail=f"Failed to upload image {img_num}: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to upload image {img_num}: {str(e)}"
+            )
 
     order_images = OrderImage(order_id=new_order.id, **image_urls)
     db.add(order_images)
@@ -103,72 +141,87 @@ async def create_order(
     db.add(new_conversation)
     await db.commit()
     await db.refresh(new_conversation)
-  
+
     if new_order.description and new_order.description.strip():
-        from utils.websocket.websocket_events import emit_chat_message
         from models import Message
+        from utils.websocket.websocket_events import emit_chat_message
 
         initial_message = Message(
             conversation_id=new_conversation.id,
             sender_id=current_user.id,
             content=new_order.description,
-            message_type='text',
+            message_type="text",
         )
         db.add(initial_message)
         await db.commit()
         await db.refresh(initial_message)
 
-        await emit_chat_message(new_conversation.id, {
-            "id": initial_message.id,
-            "conversation_id": initial_message.conversation_id,
-            "sender_id": initial_message.sender_id,
-            "content": initial_message.content,
-            "message_type": initial_message.message_type,
-            "sent_at": initial_message.sent_at.isoformat()
-        }, db)
+        await emit_chat_message(
+            new_conversation.id,
+            {
+                "id": initial_message.id,
+                "conversation_id": initial_message.conversation_id,
+                "sender_id": initial_message.sender_id,
+                "content": initial_message.content,
+                "message_type": initial_message.message_type,
+                "sent_at": initial_message.sent_at.isoformat(),
+            },
+            db,
+        )
 
     image_messages = []
     for img_num, (orig_num, img_file) in enumerate(uploaded_images, 1):
         from models import Message
+
         image_message = Message(
             conversation_id=new_conversation.id,
             sender_id=current_user.id,
             content=f"صورة الطلب {img_num}",
-            message_type='image',
+            message_type="image",
             image_data=image_urls[f"image{orig_num}_url"],
         )
         db.add(image_message)
         image_messages.append(image_message)
 
-     if image_messages:
-         await db.commit()
-         for image_message in image_messages:
-             await db.refresh(image_message)
-         from utils.websocket.websocket_events import emit_chat_message
-             await emit_chat_message(new_conversation.id, {
-                "id": image_message.id,
-                "conversation_id": image_message.conversation_id,
-                "sender_id": image_message.sender_id,
-                "content": image_message.content,
-                "message_type": image_message.message_type,
-                "image_data": image_message.image_data,
-                "sent_at": image_message.sent_at.isoformat()
-            }, db)
+    if image_messages:
+        await db.commit()
+        for image_message in image_messages:
+            await db.refresh(image_message)
+        from utils.websocket.websocket_events import emit_chat_message
+    await emit_chat_message(
+        new_conversation.id,
+        {
+            "id": image_message.id,
+            "conversation_id": image_message.conversation_id,
+            "sender_id": image_message.sender_id,
+            "content": image_message.content,
+            "message_type": image_message.message_type,
+            "image_data": image_message.image_data,
+            "sent_at": image_message.sent_at.isoformat(),
+        },
+        db,
+    )
 
-     await emit_order_status_change(new_order.id, new_order.status.value)
- 
-     from utils.websocket.websocket_manager import manager
-     await manager.broadcast_to_room({
-        "event": "new_order",
-        "data": {
-            "order_id": new_order.order_id,
-            "id": new_order.id,
-            "description": new_order.description,
-            "city_id": new_order.city_id,
-            "delivery_date": new_order.delivery_date.isoformat() if new_order.delivery_date else None,
-            "created_by_user_id": new_order.created_by_user_id,
-        }
-    }, f"couriers_city_{new_order.city_id}")
+    await emit_order_status_change(new_order.id, new_order.status.value)
+
+    from utils.websocket.websocket_manager import manager
+
+    await manager.broadcast_to_room(
+        {
+            "event": "new_order",
+            "data": {
+                "order_id": new_order.order_id,
+                "id": new_order.id,
+                "description": new_order.description,
+                "city_id": new_order.city_id,
+                "delivery_date": new_order.delivery_date.isoformat()
+                if new_order.delivery_date
+                else None,
+                "created_by_user_id": new_order.created_by_user_id,
+            },
+        },
+        f"couriers_city_{new_order.city_id}",
+    )
 
     return {
         "id": new_order.id,
@@ -214,15 +267,24 @@ async def get_order(
     """Get a specific order by order_id. The creator or assigned courier can access it."""
     result = await db.execute(
         select(Order)
-        .options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user))
+        .options(
+            selectinload(Order.invoice),
+            selectinload(Order.conversation),
+            selectinload(Order.created_by_user),
+        )
         .where(Order.order_id == order_id)
     )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    if order.created_by_user_id != current_user.id and order.assigned_to_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this order")
+    if (
+        order.created_by_user_id != current_user.id
+        and order.assigned_to_user_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this order"
+        )
 
     return order
 
@@ -237,14 +299,20 @@ async def cancel_order(
     """Cancel an order. Only the creator can cancel it."""
     result = await db.execute(
         select(Order)
-        .options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user))
+        .options(
+            selectinload(Order.invoice),
+            selectinload(Order.conversation),
+            selectinload(Order.created_by_user),
+        )
         .where(Order.order_id == order_id)
     )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.created_by_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to cancel this order")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to cancel this order"
+        )
 
     if order.status in [OrderStatus.CANCELLED, OrderStatus.DONE]:
         raise HTTPException(status_code=400, detail="Order cannot be cancelled")
@@ -256,7 +324,9 @@ async def cancel_order(
         )
 
     order.status = OrderStatus.CANCELLED
-    order.comments = f"{cancel_data.reason} by ID:{current_user.id} and name:{current_user.name}"
+    order.comments = (
+        f"{cancel_data.reason} by ID:{current_user.id} and name:{current_user.name}"
+    )
     await db.commit()
     await db.refresh(order)
 
@@ -274,14 +344,20 @@ async def assign_order(
     """Assign an order to a courier. Admin use only."""
     result = await db.execute(
         select(Order)
-        .options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user))
+        .options(
+            selectinload(Order.invoice),
+            selectinload(Order.conversation),
+            selectinload(Order.created_by_user),
+        )
         .where(Order.order_id == order_id)
     )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    result = await db.execute(select(User).where(User.id == request.assigned_to_user_id))
+    result = await db.execute(
+        select(User).where(User.id == request.assigned_to_user_id)
+    )
     assigned_user = result.scalar_one_or_none()
     if not assigned_user:
         raise HTTPException(status_code=404, detail="Assigned user not found")
@@ -313,9 +389,13 @@ async def get_available_orders_for_courier(
 ):
     """Get available orders for the courier in their city. Couriers only."""
     if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can access available orders")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can access available orders"
+        )
 
-    result = await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))
+    result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
+    )
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Courier profile not found")
@@ -349,7 +429,11 @@ async def accept_order(
 
     result = await db.execute(
         select(Order)
-        .options(selectinload(Order.invoice), selectinload(Order.conversation), selectinload(Order.created_by_user))
+        .options(
+            selectinload(Order.invoice),
+            selectinload(Order.conversation),
+            selectinload(Order.created_by_user),
+        )
         .where(Order.order_id == order_id)
     )
     order = result.scalar_one_or_none()
@@ -359,7 +443,9 @@ async def accept_order(
     if order.status != OrderStatus.NEW:
         raise HTTPException(status_code=400, detail="Order is no longer available")
 
-    result = await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))
+    result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
+    )
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Courier profile not found")
@@ -368,14 +454,18 @@ async def accept_order(
     if not profile.is_approved:
         raise HTTPException(status_code=403, detail="Your account is not yet approved")
     if not profile.is_available:
-        raise HTTPException(status_code=403, detail="You are currently marked as unavailable")
+        raise HTTPException(
+            status_code=403, detail="You are currently marked as unavailable"
+        )
 
     if order.city_id != profile.city_id:
         raise HTTPException(status_code=400, detail="Order is not in your city")
 
     order.assigned_to_user_id = current_user.id
     order.status = OrderStatus.RECEIVED_BY_COURIER
-    order.comments = f"Accepted by courier ID:{current_user.id} and name:{current_user.name}"
+    order.comments = (
+        f"Accepted by courier ID:{current_user.id} and name:{current_user.name}"
+    )
 
     if order.conversation:
         order.conversation.courier_id = current_user.id
@@ -383,41 +473,53 @@ async def accept_order(
     await db.commit()
     await db.refresh(order)
 
-    from utils.websocket.websocket_events import emit_chat_message
     from models import Message
+    from utils.websocket.websocket_events import emit_chat_message
 
-    customer_name = order.created_by_user.name if order.created_by_user else "عميلنا الكريم"
+    customer_name = (
+        order.created_by_user.name if order.created_by_user else "عميلنا الكريم"
+    )
     welcome_message = Message(
         conversation_id=order.conversation.id,
         sender_id=current_user.id,
         content=f"أهلاً وسهلاً {customer_name}\nاستلمت طلبك الآن وراح أبدأ بالتنسيق حسب التفاصيل.",
-        message_type='text',
+        message_type="text",
     )
     db.add(welcome_message)
     await db.commit()
     await db.refresh(welcome_message)
 
-    await emit_chat_message(order.conversation.id, {
-        "id": welcome_message.id,
-        "conversation_id": welcome_message.conversation_id,
-        "sender_id": welcome_message.sender_id,
-        "content": welcome_message.content,
-        "message_type": welcome_message.message_type,
-        "sent_at": welcome_message.sent_at.isoformat()
-    }, db)
+    await emit_chat_message(
+        order.conversation.id,
+        {
+            "id": welcome_message.id,
+            "conversation_id": welcome_message.conversation_id,
+            "sender_id": welcome_message.sender_id,
+            "content": welcome_message.content,
+            "message_type": welcome_message.message_type,
+            "sent_at": welcome_message.sent_at.isoformat(),
+        },
+        db,
+    )
 
     await emit_order_status_change(order.id, order.status.value)
 
     from utils.websocket.websocket_manager import manager
-    await manager.send_to_user(order.created_by_user_id, {
-        "event": "chat_available",
-        "data": {
-            "order_id": order.order_id,
-            "conversation_id": order.conversation.id if order.conversation else None,
-            "courier_id": current_user.id,
-            "courier_name": current_user.name,
-        }
-    })
+
+    await manager.send_to_user(
+        order.created_by_user_id,
+        {
+            "event": "chat_available",
+            "data": {
+                "order_id": order.order_id,
+                "conversation_id": order.conversation.id
+                if order.conversation
+                else None,
+                "courier_id": current_user.id,
+                "courier_name": current_user.name,
+            },
+        },
+    )
 
     return order
 
@@ -435,7 +537,10 @@ async def confirm_delivery(
         raise HTTPException(status_code=404, detail="Order not found")
 
     if order.created_by_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the customer who placed this order can confirm delivery")
+        raise HTTPException(
+            status_code=403,
+            detail="Only the customer who placed this order can confirm delivery",
+        )
 
     if order.status == OrderStatus.DONE:
         raise HTTPException(status_code=400, detail="Order is already completed")
@@ -445,7 +550,9 @@ async def confirm_delivery(
     order.customer_confirmed = True
     order.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    return {"message": "Delivery confirmed. The courier can now mark the order as done."}
+    return {
+        "message": "Delivery confirmed. The courier can now mark the order as done."
+    }
 
 
 @router.get("/courier/active", response_model=list[OrderResponse])
@@ -457,7 +564,9 @@ async def get_courier_active_orders(
 ):
     """Get active orders assigned to the courier. Couriers only."""
     if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can access their active orders")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can access their active orders"
+        )
 
     result = await db.execute(
         select(Order)
@@ -482,7 +591,9 @@ async def get_courier_all_orders(
 ):
     """Get all orders assigned to the courier. Couriers only."""
     if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can access their orders")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can access their orders"
+        )
 
     result = await db.execute(
         select(Order)
@@ -502,10 +613,14 @@ async def get_courier_stats(
 ):
     """Get courier statistics: active orders count and today's earnings. Couriers only."""
     if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can access their stats")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can access their stats"
+        )
 
     result = await db.execute(
-        select(func.count()).select_from(Order).where(
+        select(func.count())
+        .select_from(Order)
+        .where(
             Order.assigned_to_user_id == current_user.id,
             Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE]),
         )
@@ -516,7 +631,10 @@ async def get_courier_stats(
     today_end = datetime.combine(datetime.now(timezone.utc).date(), time.max)
 
     result = await db.execute(
-        select(func.sum(Invoice.service_fee)).select_from(Invoice).join(Order).where(
+        select(func.sum(Invoice.service_fee))
+        .select_from(Invoice)
+        .join(Order)
+        .where(
             Order.assigned_to_user_id == current_user.id,
             Invoice.status == InvoiceStatus.PAID,
             Invoice.created_at >= today_start,
@@ -525,12 +643,15 @@ async def get_courier_stats(
     )
     todays_earnings = result.scalar() or 0
 
-    return {"active_orders_count": active_orders_count, "todays_earnings": todays_earnings}
+    return {
+        "active_orders_count": active_orders_count,
+        "todays_earnings": todays_earnings,
+    }
 
 
 @router.put("/{order_id}/complete", response_model=OrderResponse)
 async def complete_order(
-    order_id: str,
+    order: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -539,7 +660,9 @@ async def complete_order(
         raise HTTPException(status_code=403, detail="Only couriers can complete orders")
 
     result = await db.execute(
-        select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id)
+        select(Order)
+        .options(selectinload(Order.invoice))
+        .where(Order.order_id == order_id)
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -547,69 +670,86 @@ async def complete_order(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-     if order.status in [OrderStatus.CANCELLED, OrderStatus.DONE]:
-         raise HTTPException(status_code=400, detail="Order cannot be completed")
+    if order.status in [OrderStatus.CANCELLED, OrderStatus.DONE]:
+        raise HTTPException(status_code=400, detail="Order cannot be completed")
 
-     if not order.customer_confirmed:
-         raise HTTPException(status_code=400, detail="Customer has not confirmed delivery yet")
+    if not order.customer_confirmed:
+        raise HTTPException(
+            status_code=400, detail="Customer has not confirmed delivery yet"
+        )
 
-     if not order.invoice or order.invoice.status != InvoiceStatus.PAID:
-         raise HTTPException(status_code=400, detail="Order cannot be completed — invoice not paid")
+    if not order.invoice or order.invoice.status != InvoiceStatus.PAID:
+        raise HTTPException(
+            status_code=400, detail="Order cannot be completed — invoice not paid"
+        )
 
-     result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
-     courier_wallet = result.scalar_one_or_none()
-     if not courier_wallet:
-         raise HTTPException(status_code=404, detail="Courier wallet not found")
+    result = await db.execute(select(Wallet).where(Wallet.user_id == current_user.id))
+    courier_wallet = result.scalar_one_or_none()
+    if not courier_wallet:
+        raise HTTPException(status_code=404, detail="Courier wallet not found")
 
-     try:
-         courier_fee = order.invoice.courier_fee
-         # Use atomic update to prevent race conditions
-         await db.execute(
-             update(Wallet)
-             .where(Wallet.user_id == current_user.id)
-             .update({Wallet.balance: Wallet.balance + courier_fee, Wallet.updated_at: datetime.now(timezone.utc)})
-         )
-         # Get updated balance for logging/record keeping
-         result = await db.execute(select(Wallet.balance).where(Wallet.user_id == current_user.id))
-         balance_after = result.scalar_one()
-         balance_before = balance_after - courier_fee
+    try:
+        courier_fee = order.invoice.courier_fee
+        # Use atomic update to prevent race conditions
+        await db.execute(
+            update(Wallet)
+            .where(Wallet.user_id == current_user.id)
+            .update(
+                {
+                    Wallet.balance: Wallet.balance + courier_fee,
+                    Wallet.updated_at: datetime.now(timezone.utc),
+                }
+            )
+        )
+        # Get updated balance for logging/record keeping
+        result = await db.execute(
+            select(Wallet.balance).where(Wallet.user_id == current_user.id)
+        )
+        balance_after = result.scalar_one()
+        balance_before = balance_after - courier_fee
 
-         order.status = OrderStatus.DONE
-         order.comments = f"Completed by courier ID:{current_user.id} and name:{current_user.name}"
-         order.updated_at = datetime.now(timezone.utc)
+        order.status = OrderStatus.DONE
+        order.comments = (
+            f"Completed by courier ID:{current_user.id} and name:{current_user.name}"
+        )
+        order.updated_at = datetime.now(timezone.utc)
 
-         result = await db.execute(
-             select(Payment).where(
-                 Payment.invoice_id == order.invoice.id,
-                 Payment.status == "completed",
-             )
-         )
-         payment = result.scalar_one_or_none()
+        result = await db.execute(
+            select(Payment).where(
+                Payment.invoice_id == order.invoice.id,
+                Payment.status == "completed",
+            )
+        )
+        payment = result.scalar_one_or_none()
 
-         if payment:
-             courier_balance_addition = CourierBalanceAddition(
-                 invoice_id=order.invoice.id,
-                 order_id=order.id,
-                 user_id=payment.user_id,
-                 payment_method=payment.payment_method,
-                 balance_before=balance_before,
-                 amount_to_add=courier_fee,
-             )
-             db.add(courier_balance_addition)
+        if payment:
+            courier_balance_addition = CourierBalanceAddition(
+                invoice_id=order.invoice.id,
+                order_id=order.id,
+                user_id=payment.user_id,
+                payment_method=payment.payment_method,
+                balance_before=balance_before,
+                amount_to_add=courier_fee,
+            )
+            db.add(courier_balance_addition)
 
-         await db.commit()
-         await db.refresh(order)
+        await db.commit()
+        await db.refresh(order)
 
-         await emit_order_status_change(order.id, order.status.value)
-         return order
+        await emit_order_status_change(order.id, order.status.value)
+        return order
 
-     except Exception:
-         await db.rollback()
-         # Log the actual error internally for debugging
-         import logging
-         logging.error(f"Error completing order: {traceback.format_exc()}")
-         # Return generic error message to user to avoid information disclosure
-         raise HTTPException(status_code=500, detail="An error occurred while completing the order. Please try again.")
+    except Exception:
+        await db.rollback()
+        # Log the actual error internally for debugging
+        import logging
+
+        logging.error(f"Error completing order: {traceback.format_exc()}")
+        # Return generic error message to user to avoid information disclosure
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while completing the order. Please try again.",
+        )
 
 
 @router.put("/{order_id}/status", response_model=OrderResponse)
@@ -621,10 +761,14 @@ async def update_order_status(
 ):
     """Update order status. Assigned courier only."""
     if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can update order status")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can update order status"
+        )
 
     result = await db.execute(
-        select(Order).options(selectinload(Order.invoice)).where(Order.order_id == order_id)
+        select(Order)
+        .options(selectinload(Order.invoice))
+        .where(Order.order_id == order_id)
     )
     order = result.scalar_one_or_none()
     if not order:
@@ -633,9 +777,17 @@ async def update_order_status(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    valid_statuses = ["received by courier", "in_progress", "ready_for_delivery", "out_for_delivery"]
+    valid_statuses = [
+        "received by courier",
+        "in_progress",
+        "ready_for_delivery",
+        "out_for_delivery",
+    ]
     if status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Valid statuses: {', '.join(valid_statuses)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Valid statuses: {', '.join(valid_statuses)}",
+        )
 
     order.status = status
     order.updated_at = datetime.now(timezone.utc)

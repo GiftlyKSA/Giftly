@@ -7,14 +7,22 @@ Covers:
 - Paylink callback (paid → marks invoice paid, failed → marks failed, already processed idempotency)
 - Access control (wrong user cannot pay another user's invoice)
 """
-import pytest
+
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
-from datetime import datetime, timezone, timedelta
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from models import (
-    Invoice, InvoiceStatus, Payment, PaymentStatus, Wallet,
-    Order, OrderStatus, Promocode, PromocodeUsage,
+    Invoice,
+    InvoiceStatus,
+    OrderStatus,
+    Payment,
+    PaymentStatus,
+    Promocode,
+    Wallet,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -24,11 +32,17 @@ pytestmark = pytest.mark.asyncio
 # POST /payments/pay-with-wallet/{invoice_id}
 # ---------------------------------------------------------------------------
 
+
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 @patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_wallet_payment_success(
-    mock_chat, mock_status, client, customer_headers, invoice: Invoice,
-    db: AsyncSession, customer
+    mock_chat,
+    mock_status,
+    client,
+    customer_headers,
+    invoice: Invoice,
+    db: AsyncSession,
+    customer,
 ):
     resp = await client.post(
         f"/payments/pay-with-wallet/{invoice.id}",
@@ -46,8 +60,13 @@ async def test_wallet_payment_success(
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 @patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_wallet_payment_with_valid_coupon(
-    mock_chat, mock_status, client, customer_headers, invoice: Invoice,
-    promocode: Promocode, db: AsyncSession
+    mock_chat,
+    mock_status,
+    client,
+    customer_headers,
+    invoice: Invoice,
+    promocode: Promocode,
+    db: AsyncSession,
 ):
     resp = await client.post(
         f"/payments/pay-with-wallet/{invoice.id}?coupon_code=SAVE10",
@@ -63,10 +82,17 @@ async def test_wallet_payment_expired_coupon(
     client, customer_headers, invoice: Invoice, db: AsyncSession
 ):
     expired = Promocode(
-        name="Expired", code="EXPIRED", description="", percentage=10,
-        max_value=0, minimum_order_value=0, usage_limit=0, usage_count=0,
+        name="Expired",
+        code="EXPIRED",
+        description="",
+        percentage=10,
+        max_value=0,
+        minimum_order_value=0,
+        usage_limit=0,
+        usage_count=0,
         valid_until=datetime.now(timezone.utc) - timedelta(days=1),
-        active=True, applicable_to="order_total",
+        active=True,
+        applicable_to="order_total",
     )
     db.add(expired)
     await db.commit()
@@ -81,8 +107,15 @@ async def test_wallet_payment_expired_coupon(
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 @patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_wallet_payment_duplicate_coupon_use_rejected(
-    mock_chat, mock_status, client, customer_headers, db: AsyncSession,
-    customer, order, invoice: Invoice, promocode: Promocode
+    mock_chat,
+    mock_status,
+    client,
+    customer_headers,
+    db: AsyncSession,
+    customer,
+    order,
+    invoice: Invoice,
+    promocode: Promocode,
 ):
     # First use (should succeed)
     resp1 = await client.post(
@@ -94,7 +127,9 @@ async def test_wallet_payment_duplicate_coupon_use_rejected(
     # Mark invoice as NEW again for second attempt
     invoice.status = InvoiceStatus.NEW
     order.status = OrderStatus.RECEIVED_BY_COURIER
-    wallet_result = await db.execute(select(Wallet).where(Wallet.user_id == customer.id))
+    wallet_result = await db.execute(
+        select(Wallet).where(Wallet.user_id == customer.id)
+    )
     w = wallet_result.scalar_one()
     w.balance = 50_000
     await db.commit()
@@ -126,7 +161,9 @@ async def test_wallet_payment_duplicate_coupon_use_rejected(
 async def test_wallet_payment_insufficient_balance(
     client, customer_headers, invoice: Invoice, db: AsyncSession, customer
 ):
-    wallet_result = await db.execute(select(Wallet).where(Wallet.user_id == customer.id))
+    wallet_result = await db.execute(
+        select(Wallet).where(Wallet.user_id == customer.id)
+    )
     w = wallet_result.scalar_one()
     w.balance = 100  # only 1 SAR
     await db.commit()
@@ -165,11 +202,11 @@ async def test_wallet_payment_wrong_user_rejected(
 # POST /payments/paylink-callback
 # ---------------------------------------------------------------------------
 
+
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 @patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_paylink_callback_paid_marks_invoice(
-    mock_chat, mock_status, client, db: AsyncSession,
-    invoice: Invoice, customer
+    mock_chat, mock_status, client, db: AsyncSession, invoice: Invoice, customer
 ):
     # Create a PENDING payment linked to the invoice
     pmt = Payment(
@@ -183,10 +220,13 @@ async def test_paylink_callback_paid_marks_invoice(
     db.add(pmt)
     await db.commit()
 
-    resp = await client.post("/payments/paylink-callback", json={
-        "transactionNo": "TXN-12345",
-        "orderStatus": "paid",
-    })
+    resp = await client.post(
+        "/payments/paylink-callback",
+        json={
+            "transactionNo": "TXN-12345",
+            "orderStatus": "paid",
+        },
+    )
     assert resp.status_code == 200
 
     await db.refresh(pmt)
@@ -209,10 +249,13 @@ async def test_paylink_callback_failed_marks_payment_failed(
     db.add(pmt)
     await db.commit()
 
-    resp = await client.post("/payments/paylink-callback", json={
-        "transactionNo": "TXN-FAIL",
-        "orderStatus": "failed",
-    })
+    resp = await client.post(
+        "/payments/paylink-callback",
+        json={
+            "transactionNo": "TXN-FAIL",
+            "orderStatus": "failed",
+        },
+    )
     assert resp.status_code == 200
 
     await db.refresh(pmt)
@@ -233,19 +276,22 @@ async def test_paylink_callback_already_processed_idempotent(
     db.add(pmt)
     await db.commit()
 
-    resp = await client.post("/payments/paylink-callback", json={
-        "transactionNo": "TXN-DONE",
-        "orderStatus": "paid",
-    })
+    resp = await client.post(
+        "/payments/paylink-callback",
+        json={
+            "transactionNo": "TXN-DONE",
+            "orderStatus": "paid",
+        },
+    )
     assert resp.status_code == 200
     assert "Already processed" in resp.json()["message"]
 
 
-async def test_paylink_callback_wallet_topup(
-    client, db: AsyncSession, customer
-):
+async def test_paylink_callback_wallet_topup(client, db: AsyncSession, customer):
     """Callback for wallet top-up (no invoice_id) should credit the wallet."""
-    wallet_result = await db.execute(select(Wallet).where(Wallet.user_id == customer.id))
+    wallet_result = await db.execute(
+        select(Wallet).where(Wallet.user_id == customer.id)
+    )
     w = wallet_result.scalar_one()
     before = w.balance
 
@@ -260,10 +306,13 @@ async def test_paylink_callback_wallet_topup(
     db.add(pmt)
     await db.commit()
 
-    resp = await client.post("/payments/paylink-callback", json={
-        "transactionNo": "TXN-TOPUP",
-        "orderStatus": "paid",
-    })
+    resp = await client.post(
+        "/payments/paylink-callback",
+        json={
+            "transactionNo": "TXN-TOPUP",
+            "orderStatus": "paid",
+        },
+    )
     assert resp.status_code == 200
 
     await db.refresh(w)
@@ -274,8 +323,11 @@ async def test_paylink_callback_wallet_topup(
 # GET /payments/my-payments
 # ---------------------------------------------------------------------------
 
+
 async def test_my_payments_pagination(client, customer_headers):
-    resp = await client.get("/payments/my-payments?skip=0&limit=10", headers=customer_headers)
+    resp = await client.get(
+        "/payments/my-payments?skip=0&limit=10", headers=customer_headers
+    )
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
 

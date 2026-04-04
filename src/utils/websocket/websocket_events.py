@@ -1,8 +1,9 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from models import Order
-from websocket_manager import manager
 from database import AsyncSessionLocal
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from websocket_manager import manager
+
+from models import Order
 
 
 async def emit_order_status_change(

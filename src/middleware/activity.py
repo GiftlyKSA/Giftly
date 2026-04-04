@@ -7,18 +7,18 @@ Uses an in-process dict for the debounce — good enough for single-process depl
 For multi-process, swap the dict for a Redis SETEX call.
 """
 
-import time
 import logging
+import time
 from datetime import datetime, timezone
-
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
-from jose import jwt, JWTError
-from sqlalchemy import update
 
 from config import settings
 from database import AsyncSessionLocal
+from jose import JWTError, jwt
+from sqlalchemy import update
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
 from models import User
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class LastActivityMiddleware(BaseHTTPMiddleware):
 
         now = time.monotonic()
         if (now - _last_write.get(user_id, 0)) < DEBOUNCE_SECONDS:
-            return response   # Debounced — skip DB write
+            return response  # Debounced — skip DB write
 
         _last_write[user_id] = now
 

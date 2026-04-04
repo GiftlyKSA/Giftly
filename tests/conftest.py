@@ -5,18 +5,19 @@ Database: async SQLite (aiosqlite) in-memory — no real PostgreSQL needed.
 HTTP client: httpx AsyncClient.
 External services (SMS, Paylink, S3) are mocked.
 """
-import sys
+
 import os
+import sys
+
 # Add the src directory to the Python path so tests can import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import pytest
-import pytest_asyncio
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import AsyncGenerator
 
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 # ── must set env vars BEFORE importing app modules ──────────────────────────
@@ -31,18 +32,26 @@ os.environ.setdefault("aws_region", "us-east-1")
 os.environ.setdefault("sms_provider_enabled", "false")
 os.environ.setdefault("paylink_api_key", "")
 os.environ.setdefault("paylink_test_mode", "true")
-os.environ.setdefault("paylink_callback_url", "http://localhost/payments/paylink-callback")
+os.environ.setdefault(
+    "paylink_callback_url", "http://localhost/payments/paylink-callback"
+)
 os.environ.setdefault("paylink_return_url", "http://localhost/return")
 
+from auth import create_tokens
 from database import Base, get_db
+
 from models import (
-    User, City, Order, Invoice,
-    Conversation, Message, Wallet, Payment, PaymentMethod, PaymentStatus,
-    Promocode, PromocodeUsage, CourierProfile, CustomerProfile, RefreshToken,
-    ImportantEvent,
+    City,
+    Conversation,
+    CourierProfile,
+    CustomerProfile,
+    Invoice,
+    Order,
+    Promocode,
+    User,
+    Wallet,
 )
-from models.enums import UserRole, ConversationStatus, OrderStatus, InvoiceStatus
-from auth import get_password_hash, create_tokens
+from models.enums import ConversationStatus, InvoiceStatus, OrderStatus, UserRole
 
 # ---------------------------------------------------------------------------
 # Async test engine (SQLite in-memory)
@@ -78,6 +87,7 @@ async def db(engine) -> AsyncGenerator[AsyncSession, None]:
 # FastAPI app wired to the test DB
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def app(engine):
     """Return FastAPI app with get_db overridden to use in-memory SQLite."""
@@ -96,13 +106,16 @@ async def app(engine):
 
 @pytest_asyncio.fixture
 async def client(app) -> AsyncGenerator[AsyncClient, None]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         yield ac
 
 
 # ---------------------------------------------------------------------------
 # Seed data helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def city(db: AsyncSession) -> City:
@@ -146,14 +159,16 @@ async def courier(db: AsyncSession, city: City) -> User:
     await db.commit()
     await db.refresh(u)
     db.add(Wallet(user_id=u.id, balance=0))
-    db.add(CourierProfile(
-        user_id=u.id,
-        national_id="1234567890",
-        city_id=city.id,
-        iban="SA1234567890123456789012",
-        is_approved=True,
-        is_available=True,
-    ))
+    db.add(
+        CourierProfile(
+            user_id=u.id,
+            national_id="1234567890",
+            city_id=city.id,
+            iban="SA1234567890123456789012",
+            is_approved=True,
+            is_available=True,
+        )
+    )
     await db.commit()
     return u
 
@@ -172,14 +187,16 @@ async def unapproved_courier(db: AsyncSession, city: City) -> User:
     await db.commit()
     await db.refresh(u)
     db.add(Wallet(user_id=u.id, balance=0))
-    db.add(CourierProfile(
-        user_id=u.id,
-        national_id="0987654321",
-        city_id=city.id,
-        iban="SA9876543210123456789012",
-        is_approved=False,
-        is_available=False,
-    ))
+    db.add(
+        CourierProfile(
+            user_id=u.id,
+            national_id="0987654321",
+            city_id=city.id,
+            iban="SA9876543210123456789012",
+            is_approved=False,
+            is_available=False,
+        )
+    )
     await db.commit()
     return u
 
@@ -187,6 +204,7 @@ async def unapproved_courier(db: AsyncSession, city: City) -> User:
 # ---------------------------------------------------------------------------
 # Auth token helpers
 # ---------------------------------------------------------------------------
+
 
 async def make_tokens(db: AsyncSession, user: User):
     """Generate access + refresh tokens for a user."""
@@ -215,6 +233,7 @@ async def unapproved_courier_headers(db: AsyncSession, unapproved_courier: User)
 # Common domain objects
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def order(db: AsyncSession, customer: User, city: City) -> Order:
     o = Order(
@@ -230,12 +249,14 @@ async def order(db: AsyncSession, customer: User, city: City) -> Order:
     await db.commit()
     await db.refresh(o)
     # create conversation
-    db.add(Conversation(
-        customer_id=customer.id,
-        courier_id=None,
-        order_id=o.id,
-        status=ConversationStatus.ACTIVE,
-    ))
+    db.add(
+        Conversation(
+            customer_id=customer.id,
+            courier_id=None,
+            order_id=o.id,
+            status=ConversationStatus.ACTIVE,
+        )
+    )
     await db.commit()
     return o
 
@@ -256,9 +277,9 @@ async def invoice(db: AsyncSession, order: Order, customer: User) -> Invoice:
         invoice_id="INV-001",
         order_id=order.id,
         created_by_user_id=customer.id,
-        full_amount=10_000,   # 100 SAR
-        service_fee=1_000,    # 10 SAR
-        courier_fee=2_000,    # 20 SAR
+        full_amount=10_000,  # 100 SAR
+        service_fee=1_000,  # 10 SAR
+        courier_fee=2_000,  # 20 SAR
         order_only_price=9_000,
         status=InvoiceStatus.NEW,
         description="Test invoice",

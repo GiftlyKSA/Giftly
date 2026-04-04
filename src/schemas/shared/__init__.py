@@ -1,9 +1,15 @@
-from pydantic import BaseModel, EmailStr, validator
-from datetime import date, datetime
-from typing import Optional
 import re
+from datetime import date, datetime
 from enum import Enum
-from models.enums import OrderStatus as OrderStatusEnum, InvoiceStatus as InvoiceStatusEnum, PaymentMethod as PaymentMethodEnum, PaymentStatus as PaymentStatusEnum
+from typing import Optional
+
+from pydantic import BaseModel, EmailStr, validator
+
+from models.enums import InvoiceStatus as InvoiceStatusEnum
+from models.enums import OrderStatus as OrderStatusEnum
+from models.enums import PaymentMethod as PaymentMethodEnum
+from models.enums import PaymentStatus as PaymentStatusEnum
+
 
 class UpdateUserProfile(BaseModel):
     name: Optional[str] = None
@@ -13,25 +19,31 @@ class UpdateUserProfile(BaseModel):
     passport_id: Optional[str] = None
     timezone: Optional[str] = None
 
-    @validator('name')
+    @validator("name")
     def validate_name(cls, v):
         if v is not None:
-            if not re.match(r'^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s]{2,}$', v.strip()):
-                raise ValueError('Name must contain only letters, numbers, and spaces, minimum 2 characters')
+            if not re.match(
+                r"^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s]{2,}$",
+                v.strip(),
+            ):
+                raise ValueError(
+                    "Name must contain only letters, numbers, and spaces, minimum 2 characters"
+                )
             if len(v.strip()) < 2:
-                raise ValueError('Name must be at least 2 characters long')
+                raise ValueError("Name must be at least 2 characters long")
         return v
 
-    @validator('date_of_birth')
+    @validator("date_of_birth")
     def validate_date_of_birth(cls, v):
         if v is not None:
             today = date.today()
             age = today.year - v.year - ((today.month, today.day) < (v.month, v.day))
             if age < 16:
-                raise ValueError('User must be at least 16 years old')
+                raise ValueError("User must be at least 16 years old")
             if v > today:
-                raise ValueError('Date of birth cannot be in the future')
+                raise ValueError("Date of birth cannot be in the future")
         return v
+
 
 class Token(BaseModel):
     access_token: str
@@ -39,11 +51,14 @@ class Token(BaseModel):
     token_type: str
     needs_profile: bool = False
 
+
 class TokenData(BaseModel):
     phone_number: Optional[str] = None
 
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
 
 class CreateOrder(BaseModel):
     description: Optional[str] = None
@@ -53,11 +68,12 @@ class CreateOrder(BaseModel):
     image2_data: Optional[str] = None  # Base64 encoded image data
     image3_data: Optional[str] = None  # Base64 encoded image data
 
-    @validator('description')
+    @validator("description")
     def validate_description(cls, v):
         if v is not None and len(v.strip()) == 0:
             return None  # Treat empty strings as None
         return v
+
 
 # New schema for order creation with file uploads
 class CreateOrderWithImages(BaseModel):
@@ -65,7 +81,7 @@ class CreateOrderWithImages(BaseModel):
     city_id: int
     delivery_date: datetime
 
-    @validator('description')
+    @validator("description")
     def validate_description(cls, v):
         if v is not None and len(v.strip()) == 0:
             return None  # Treat empty strings as None
@@ -73,6 +89,7 @@ class CreateOrderWithImages(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
 
 class InvoiceResponse(BaseModel):
     id: int
@@ -96,6 +113,7 @@ class InvoiceResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class OrderResponse(BaseModel):
     id: int
     order_id: str
@@ -113,6 +131,7 @@ class OrderResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class CityResponse(BaseModel):
     id: int
     name: str
@@ -121,6 +140,7 @@ class CityResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class CreateInvoice(BaseModel):
     order_id: int
@@ -134,25 +154,36 @@ class CreateInvoice(BaseModel):
     tax_amount: Optional[float] = 0.0
     discount_amount: Optional[float] = 0.0
 
-    @validator('full_amount', 'service_fee', 'order_only_price', 'courier_fee', 'tax_amount', 'discount_amount')
+    @validator(
+        "full_amount",
+        "service_fee",
+        "order_only_price",
+        "courier_fee",
+        "tax_amount",
+        "discount_amount",
+    )
     def validate_amount(cls, v):
         if v is not None:
             if v < 0:
-                raise ValueError('Amount cannot be negative')
+                raise ValueError("Amount cannot be negative")
             # Check for at most 3 decimal places
             if round(v, 3) != v:
-                raise ValueError('Amount must have at most 3 decimal places')
+                raise ValueError("Amount must have at most 3 decimal places")
         return v
+
 
 class CancelOrderRequest(BaseModel):
     reason: str
 
+
 class AssignOrderRequest(BaseModel):
     assigned_to_user_id: int
+
 
 # Chat schemas
 class CreateConversationRequest(BaseModel):
     other_user_id: int  # The ID of the other user (customer or courier)
+
 
 class ConversationResponse(BaseModel):
     id: int
@@ -165,16 +196,20 @@ class ConversationResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class SendMessageRequest(BaseModel):
     content: str
     message_type: str = "text"  # "text", "invoice", "image", "video", "system"
-    media_type: Optional[str] = None  # "image" or "video" when message_type is "image" or "video"
+    media_type: Optional[str] = (
+        None  # "image" or "video" when message_type is "image" or "video"
+    )
     invoice_description: Optional[str] = None
     invoice_gift_price: Optional[int] = None
     invoice_service_fee: Optional[int] = None
     invoice_delivery_fee: Optional[int] = None
     invoice_total: Optional[int] = None
     media_url: Optional[str] = None  # URL to uploaded media file
+
 
 class MessageResponse(BaseModel):
     id: int
@@ -194,6 +229,7 @@ class MessageResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # Wallet schemas
 class WalletResponse(BaseModel):
     id: int
@@ -205,37 +241,43 @@ class WalletResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class CreateWallet(BaseModel):
     user_id: int
     balance: Optional[int] = 0
 
+
 class UpdateWalletBalance(BaseModel):
     amount: int  # Positive for deposit, negative for withdrawal
+
 
 class ChargeWalletRequest(BaseModel):
     amount: int  # Amount to charge in riyals (not cents)
 
-    @validator('amount')
+    @validator("amount")
     def validate_amount(cls, v):
         if v < 10:
-            raise ValueError('Minimum charge amount is 10 riyals')
+            raise ValueError("Minimum charge amount is 10 riyals")
         if not isinstance(v, int):
-            raise ValueError('Amount must be an integer')
+            raise ValueError("Amount must be an integer")
         return v
+
 
 class RequestWalletDeposit(BaseModel):
     amount: float  # Amount to request in riyals with decimals
 
-    @validator('amount')
+    @validator("amount")
     def validate_amount(cls, v):
         if v < 10:
-            raise ValueError('Minimum deposit amount is 10 riyals')
+            raise ValueError("Minimum deposit amount is 10 riyals")
         # Check for exactly 2 decimal places
         if round(v, 2) != v:
-            raise ValueError('Amount must have exactly 2 decimal places')
+            raise ValueError("Amount must have exactly 2 decimal places")
         return v
 
+
 # Payment schemas - using enums from models.enums
+
 
 class PaymentResponse(BaseModel):
     id: int
@@ -254,6 +296,7 @@ class PaymentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class CreatePayment(BaseModel):
     invoice_id: int
     user_id: int
@@ -262,10 +305,12 @@ class CreatePayment(BaseModel):
     transaction_id: Optional[str] = None
     payment_details: Optional[str] = None
 
+
 class UpdatePaymentStatus(BaseModel):
     status: PaymentStatusEnum
     transaction_id: Optional[str] = None
     payment_date: Optional[datetime] = None
+
 
 # Promocode schemas
 class PromocodeResponse(BaseModel):
@@ -287,6 +332,7 @@ class PromocodeResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class CreatePromocode(BaseModel):
     name: str
     code: str
@@ -299,6 +345,7 @@ class CreatePromocode(BaseModel):
     active: Optional[bool] = True
     applicable_to: str = "order_total"
 
+
 class UpdatePromocode(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -310,9 +357,11 @@ class UpdatePromocode(BaseModel):
     active: Optional[bool] = None
     applicable_to: Optional[str] = None
 
+
 class ApplyPromocodeRequest(BaseModel):
     code: str
     order_total: int
+
 
 # Important Events schemas
 class CreateImportantEventRequest(BaseModel):
@@ -320,19 +369,20 @@ class CreateImportantEventRequest(BaseModel):
     event_date: datetime
     recurring: Optional[bool] = False
 
-    @validator('title')
+    @validator("title")
     def validate_title(cls, v):
         if not v or len(v.strip()) == 0:
-            raise ValueError('Title is required')
+            raise ValueError("Title is required")
         if len(v.strip()) > 200:
-            raise ValueError('Title must be less than 200 characters')
+            raise ValueError("Title must be less than 200 characters")
         return v.strip()
 
-    @validator('event_date')
+    @validator("event_date")
     def validate_event_date(cls, v):
         if v < datetime.utcnow():
-            raise ValueError('Event date cannot be in the past')
+            raise ValueError("Event date cannot be in the past")
         return v
+
 
 class ImportantEventResponse(BaseModel):
     id: int
@@ -346,23 +396,24 @@ class ImportantEventResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class UpdateImportantEventRequest(BaseModel):
     title: Optional[str] = None
     event_date: Optional[datetime] = None
     recurring: Optional[bool] = None
 
-    @validator('title')
+    @validator("title")
     def validate_title(cls, v):
         if v is not None:
             if len(v.strip()) == 0:
-                raise ValueError('Title cannot be empty')
+                raise ValueError("Title cannot be empty")
             if len(v.strip()) > 200:
-                raise ValueError('Title must be less than 200 characters')
+                raise ValueError("Title must be less than 200 characters")
             return v.strip()
         return v
 
-    @validator('event_date')
+    @validator("event_date")
     def validate_event_date(cls, v):
         if v is not None and v < datetime.utcnow():
-            raise ValueError('Event date cannot be in the past')
+            raise ValueError("Event date cannot be in the past")
         return v

@@ -2,8 +2,8 @@
 
 # Invoice Email Template
 invoice_email = {
-    'subject': 'فاتورة طلبك من هديتي - {{ invoice_id }}',
-    'html': """
+    "subject": "فاتورة طلبك من هديتي - {{ invoice_id }}",
+    "html": """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
@@ -217,7 +217,7 @@ invoice_email = {
 </body>
 </html>
     """,
-    'text': """
+    "text": """
 مرحباً {{ customer_name }},
 
 تم إنشاء فاتورة لطلبك في هديتي بنجاح!
@@ -254,13 +254,13 @@ invoice_email = {
 للاستفسارات: support@giftly.com | هاتف: 800-123-4567
 
 © 2024 هديتي. جميع الحقوق محفوظة.
-    """
+    """,
 }
 
 # Welcome Email Template
 welcome_email = {
-    'subject': 'مرحباً بك في هديتي - {{ user_name }}!',
-    'html': """
+    "subject": "مرحباً بك في هديتي - {{ user_name }}!",
+    "html": """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
@@ -467,7 +467,7 @@ welcome_email = {
 </body>
 </html>
     """,
-    'text': """
+    "text": """
 مرحباً {{ user_name }}! 🎉
 
 شكراً لتسجيلك في هديتي!
@@ -493,5 +493,5 @@ welcome_email = {
 للاستفسارات: support@giftly.com | هاتف: 800-123-4567
 
 © 2024 هديتي. جميع الحقوق محفوظة.
-    """
+    """,
 }

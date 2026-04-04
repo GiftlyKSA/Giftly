@@ -1,9 +1,8 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Text, Enum, UniqueConstraint, Index, text, select
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 from database import Base
-from .enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
-from sqlalchemy import event
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
@@ -11,7 +10,9 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     token_hash = Column(String, nullable=False)
-    jti = Column(String, nullable=True, unique=True, index=True)  # JWT ID for O(1) token lookup
+    jti = Column(
+        String, nullable=True, unique=True, index=True
+    )  # JWT ID for O(1) token lookup
     device_id = Column(String, nullable=True)  # Optional device identifier
     expires_at = Column(DateTime, nullable=False)
     revoked = Column(Boolean, default=False)
@@ -21,7 +22,11 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
     __table_args__ = (
-        Index('idx_refresh_user', 'user_id', 'revoked', 'expires_at'),
-        Index('idx_refresh_device', 'user_id', 'device_id'),
-        Index('idx_refresh_expiry', 'expires_at', postgresql_where=Column('revoked') == False),
+        Index("idx_refresh_user", "user_id", "revoked", "expires_at"),
+        Index("idx_refresh_device", "user_id", "device_id"),
+        Index(
+            "idx_refresh_expiry",
+            "expires_at",
+            postgresql_where=Column("revoked") == False,
+        ),
     )

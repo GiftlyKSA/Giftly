@@ -1,2 +1,2 @@
 # Routers package
-from . import auth, admin, orders, cities, invoices, chat
+from . import admin, auth, chat, cities, invoices, orders

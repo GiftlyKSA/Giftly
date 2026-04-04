@@ -5,9 +5,11 @@ Covers:
 - PUT /couriers/availability (toggle, requires approved courier)
 - GET /couriers/available/{city_id} (pagination)
 """
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from models import CourierProfile
 
 pytestmark = pytest.mark.asyncio
@@ -17,8 +19,13 @@ pytestmark = pytest.mark.asyncio
 # PUT /couriers/availability
 # ---------------------------------------------------------------------------
 
-async def test_toggle_availability_approved_courier(client, courier_headers, courier, db: AsyncSession):
-    result = await db.execute(select(CourierProfile).where(CourierProfile.user_id == courier.id))
+
+async def test_toggle_availability_approved_courier(
+    client, courier_headers, courier, db: AsyncSession
+):
+    result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == courier.id)
+    )
     profile = result.scalar_one()
     initial = profile.is_available
 
@@ -30,7 +37,9 @@ async def test_toggle_availability_approved_courier(client, courier_headers, cou
 async def test_toggle_availability_unapproved_courier_rejected(
     client, unapproved_courier_headers
 ):
-    resp = await client.put("/couriers/availability", headers=unapproved_courier_headers)
+    resp = await client.put(
+        "/couriers/availability", headers=unapproved_courier_headers
+    )
     assert resp.status_code == 403
 
 
@@ -47,6 +56,7 @@ async def test_toggle_availability_requires_auth(client):
 # ---------------------------------------------------------------------------
 # GET /couriers/available/{city_id}
 # ---------------------------------------------------------------------------
+
 
 async def test_list_available_couriers(client, city, courier):
     resp = await client.get(f"/couriers/available/{city.id}")

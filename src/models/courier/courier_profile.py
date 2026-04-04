@@ -1,32 +1,17 @@
+from database import Base
 from sqlalchemy import (
+    JSON,
+    Boolean,
     Column,
+    DateTime,
+    ForeignKey,
+    Index,
     Integer,
     String,
-    Boolean,
-    DateTime,
-    Date,
-    ForeignKey,
-    Text,
-    Enum,
-    UniqueConstraint,
-    Index,
     text,
-    select,
-    JSON,
 )
-from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database import Base
-from ..enums import (
-    OrderStatus,
-    InvoiceStatus,
-    PaymentMethod,
-    PaymentStatus,
-    DepositRequestStatus,
-    UserRole,
-    ConversationStatus,
-)
-from sqlalchemy import event
+from sqlalchemy.sql import func
 
 
 class CourierProfile(Base):

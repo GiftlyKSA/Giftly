@@ -1,16 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from datetime import datetime, timezone
+from typing import List
+
 from database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models import Promocode
 from schemas import ApplyPromocodeRequest
-from typing import List
-from datetime import datetime, timezone
 
 router = APIRouter()
 
+
 @router.post("/apply", response_model=dict)
-async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Depends(get_db)):
+async def apply_promocode(
+    request: ApplyPromocodeRequest, db: AsyncSession = Depends(get_db)
+):
     """
     Calculate discount for a promocode. Public endpoint for customers and couriers.
     """
@@ -18,7 +23,7 @@ async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Dep
         select(Promocode).where(
             Promocode.code == request.code,
             Promocode.active == True,
-            Promocode.valid_until > datetime.now(timezone.utc)
+            Promocode.valid_until > datetime.now(timezone.utc),
         )
     )
     promocode = result.scalar_one_or_none()
@@ -30,7 +35,7 @@ async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Dep
     if request.order_total < promocode.minimum_order_value:
         raise HTTPException(
             status_code=400,
-            detail=f"Order total must be at least {promocode.minimum_order_value} to use this promocode"
+            detail=f"Order total must be at least {promocode.minimum_order_value} to use this promocode",
         )
 
     # Check usage limit
@@ -51,8 +56,9 @@ async def apply_promocode(request: ApplyPromocodeRequest, db: AsyncSession = Dep
         "percentage": promocode.percentage,
         "max_value": promocode.max_value,
         "discount_amount": discount_amount,
-        "final_amount": request.order_total - discount_amount
+        "final_amount": request.order_total - discount_amount,
     }
+
 
 @router.get("/active/list", response_model=List[dict])
 async def get_active_promocodes(
@@ -64,26 +70,30 @@ async def get_active_promocodes(
     Get all active promocodes. Public endpoint for customers and couriers.
     """
     result = await db.execute(
-        select(Promocode).where(
-            Promocode.active == True,
-            Promocode.valid_until > datetime.now(timezone.utc)
-        ).offset(skip).limit(limit)
+        select(Promocode)
+        .where(
+            Promocode.active == True, Promocode.valid_until > datetime.now(timezone.utc)
+        )
+        .offset(skip)
+        .limit(limit)
     )
     promocodes = result.scalars().all()
 
     # Return simplified promocode info (without sensitive data like usage counts)
     result = []
     for promo in promocodes:
-        result.append({
-            "id": promo.id,
-            "name": promo.name,
-            "code": promo.code,
-            "description": promo.description,
-            "percentage": promo.percentage,
-            "max_value": promo.max_value,
-            "minimum_order_value": promo.minimum_order_value,
-            "applicable_to": promo.applicable_to,
-            "valid_until": promo.valid_until
-        })
+        result.append(
+            {
+                "id": promo.id,
+                "name": promo.name,
+                "code": promo.code,
+                "description": promo.description,
+                "percentage": promo.percentage,
+                "max_value": promo.max_value,
+                "minimum_order_value": promo.minimum_order_value,
+                "applicable_to": promo.applicable_to,
+                "valid_until": promo.valid_until,
+            }
+        )
 
     return result

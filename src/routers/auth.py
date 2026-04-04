@@ -1,24 +1,26 @@
 import re
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta, date, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from datetime import date, datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from utils.database.database import get_db
-from models import User, Wallet, CustomerProfile, CourierProfile
+
+from models import CourierProfile, CustomerProfile, User, Wallet
 from models.enums import UserRole
-from schemas import SendOTP, OTPVerify, Token, UpdateUserProfile, RefreshTokenRequest
+from schemas import OTPVerify, RefreshTokenRequest, SendOTP, Token, UpdateUserProfile
 from utils.auth.auth import (
     create_access_token,
     create_tokens,
     generate_otp,
-    get_user_by_phone,
     get_current_user,
+    get_user_by_phone,
     validate_refresh_token,
 )
-from utils.database.config import settings
 from utils.clients.sms import send_sms
+from utils.database.config import settings
+from utils.database.database import get_db
 
 router = APIRouter()
 

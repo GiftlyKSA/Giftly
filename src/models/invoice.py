@@ -1,9 +1,20 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Text, Enum, UniqueConstraint, Index, text, select
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 from database import Base
-from .enums import OrderStatus, InvoiceStatus, PaymentMethod, PaymentStatus, DepositRequestStatus, UserRole, ConversationStatus
-from sqlalchemy import event
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
+from .enums import InvoiceStatus
+
 
 class Invoice(Base):
     __tablename__ = "invoices"
@@ -13,6 +24,7 @@ class Invoice(Base):
 
     def __str__(self):
         return f"Invoice {self.invoice_id}"
+
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     full_amount = Column(Integer, nullable=False)  # Amount in cents/halaym
@@ -27,7 +39,9 @@ class Invoice(Base):
     due_date = Column(DateTime, nullable=True)
     tax_amount = Column(Integer, nullable=False, default=0)
     discount_amount = Column(Integer, nullable=False, default=0)
-    promocode_id = Column(Integer, ForeignKey("promocodes.id"), nullable=True)  # Which promocode was used
+    promocode_id = Column(
+        Integer, ForeignKey("promocodes.id"), nullable=True
+    )  # Which promocode was used
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     deleted_at = Column(DateTime, nullable=True)  # Soft delete
@@ -35,11 +49,13 @@ class Invoice(Base):
     # Relationships
     order = relationship("Order", back_populates="invoice")
     created_by_user = relationship("User", back_populates="created_invoices")
-    payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
+    payments = relationship(
+        "Payment", back_populates="invoice", cascade="all, delete-orphan"
+    )
     promocode = relationship("Promocode", back_populates="invoices")
 
     __table_args__ = (
-        Index('idx_invoice_order', 'order_id'),
-        Index('idx_invoice_status', 'status', 'due_date'),
-        Index('idx_invoice_paid', 'status', 'sent_to_user_via_email'),
+        Index("idx_invoice_order", "order_id"),
+        Index("idx_invoice_status", "status", "due_date"),
+        Index("idx_invoice_paid", "status", "sent_to_user_via_email"),
     )

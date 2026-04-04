@@ -10,12 +10,13 @@ Covers:
 - Status update
 - Security: access control, cross-user access denied
 """
+
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime, timezone
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import Order, OrderStatus, Invoice, InvoiceStatus, Wallet, CourierProfile
+
+from models import Invoice, InvoiceStatus, Order, OrderStatus
 
 pytestmark = pytest.mark.asyncio
 
@@ -23,6 +24,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 # GET /orders/
 # ---------------------------------------------------------------------------
+
 
 async def test_list_orders_requires_auth(client):
     resp = await client.get("/orders/")
@@ -47,13 +49,16 @@ async def test_list_orders_only_own(client, courier_headers, order: Order):
 # GET /orders/{order_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_get_order_by_creator(client, customer_headers, order: Order):
     resp = await client.get(f"/orders/{order.order_id}", headers=customer_headers)
     assert resp.status_code == 200
     assert resp.json()["order_id"] == order.order_id
 
 
-async def test_get_order_forbidden_for_other_user(client, courier_headers, order: Order):
+async def test_get_order_forbidden_for_other_user(
+    client, courier_headers, order: Order
+):
     """A courier who hasn't accepted the order cannot view it via GET /{id}."""
     resp = await client.get(f"/orders/{order.order_id}", headers=courier_headers)
     assert resp.status_code == 403
@@ -68,6 +73,7 @@ async def test_get_order_not_found(client, customer_headers):
 # PUT /orders/{order_id}/cancel
 # ---------------------------------------------------------------------------
 
+
 async def test_cancel_order_by_customer(client, customer_headers, order: Order):
     resp = await client.put(
         f"/orders/{order.order_id}/cancel",
@@ -78,7 +84,9 @@ async def test_cancel_order_by_customer(client, customer_headers, order: Order):
     assert resp.json()["status"] == "CANCELLED"
 
 
-async def test_cancel_order_forbidden_for_courier(client, courier_headers, order: Order):
+async def test_cancel_order_forbidden_for_courier(
+    client, courier_headers, order: Order
+):
     resp = await client.put(
         f"/orders/{order.order_id}/cancel",
         json={"reason": "Not my order"},
@@ -87,7 +95,9 @@ async def test_cancel_order_forbidden_for_courier(client, courier_headers, order
     assert resp.status_code == 403
 
 
-async def test_cancel_already_cancelled_order(client, customer_headers, order: Order, db: AsyncSession):
+async def test_cancel_already_cancelled_order(
+    client, customer_headers, order: Order, db: AsyncSession
+):
     order.status = OrderStatus.CANCELLED
     await db.commit()
     resp = await client.put(
@@ -116,6 +126,7 @@ async def test_cancel_order_with_paid_invoice_rejected(
 # PUT /orders/{order_id}/accept
 # ---------------------------------------------------------------------------
 
+
 @patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 @patch("websocket_manager.manager.send_to_user", new_callable=AsyncMock)
@@ -130,7 +141,9 @@ async def test_accept_order_by_approved_courier(
 async def test_accept_order_by_unapproved_courier(
     client, unapproved_courier_headers, order: Order
 ):
-    resp = await client.put(f"/orders/{order.order_id}/accept", headers=unapproved_courier_headers)
+    resp = await client.put(
+        f"/orders/{order.order_id}/accept", headers=unapproved_courier_headers
+    )
     assert resp.status_code == 403
 
 
@@ -143,14 +156,19 @@ async def test_accept_order_not_new_fails(
     assert resp.status_code == 400
 
 
-async def test_accept_order_requires_courier_role(client, customer_headers, order: Order):
-    resp = await client.put(f"/orders/{order.order_id}/accept", headers=customer_headers)
+async def test_accept_order_requires_courier_role(
+    client, customer_headers, order: Order
+):
+    resp = await client.put(
+        f"/orders/{order.order_id}/accept", headers=customer_headers
+    )
     assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
 # POST /orders/{order_id}/confirm-delivery
 # ---------------------------------------------------------------------------
+
 
 async def test_confirm_delivery_by_customer(
     client, customer_headers, accepted_order: Order, db: AsyncSession
@@ -178,10 +196,16 @@ async def test_confirm_delivery_by_courier_rejected(
 # PUT /orders/{order_id}/complete
 # ---------------------------------------------------------------------------
 
+
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 async def test_complete_order_success(
-    mock_status, client, courier_headers, accepted_order: Order,
-    invoice: Invoice, db: AsyncSession, courier
+    mock_status,
+    client,
+    courier_headers,
+    accepted_order: Order,
+    invoice: Invoice,
+    db: AsyncSession,
+    courier,
 ):
     # Mark invoice as paid, set customer_confirmed
     invoice.status = InvoiceStatus.PAID
@@ -199,8 +223,12 @@ async def test_complete_order_success(
 
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
 async def test_complete_order_without_customer_confirm_fails(
-    mock_status, client, courier_headers, accepted_order: Order,
-    invoice: Invoice, db: AsyncSession
+    mock_status,
+    client,
+    courier_headers,
+    accepted_order: Order,
+    invoice: Invoice,
+    db: AsyncSession,
 ):
     invoice.status = InvoiceStatus.PAID
     accepted_order.status = OrderStatus.PAID
@@ -212,7 +240,10 @@ async def test_complete_order_without_customer_confirm_fails(
         headers=courier_headers,
     )
     assert resp.status_code == 400
-    assert "customer" in resp.json()["detail"].lower() or "confirm" in resp.json()["detail"].lower()
+    assert (
+        "customer" in resp.json()["detail"].lower()
+        or "confirm" in resp.json()["detail"].lower()
+    )
 
 
 @patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
@@ -232,6 +263,7 @@ async def test_complete_order_without_paid_invoice_fails(
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
+
 
 async def test_health_endpoint(client):
     resp = await client.get("/health")

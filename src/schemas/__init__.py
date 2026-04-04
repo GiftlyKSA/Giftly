@@ -7,7 +7,6 @@ __all__ = [
     "InvoiceStatusEnum",
     "SendOTP",
     "OTPVerify",
-    
     # From shared (everything else)
     "UpdateUserProfile",
     "Token",

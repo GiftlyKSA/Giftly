@@ -1,14 +1,15 @@
 """
 Database-related fixtures for the test suite.
 """
-import sys
+
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 # ── must set env vars BEFORE importing app modules ──────────────────────────
@@ -23,10 +24,13 @@ os.environ.setdefault("AWS_REGION", "us-east-1")
 os.environ.setdefault("SMS_PROVIDER_ENABLED", "false")
 os.environ.setdefault("PAYLINK_API_KEY", "")
 os.environ.setdefault("PAYLINK_TEST_MODE", "true")
-os.environ.setdefault("PAYLINK_CALLBACK_URL", "http://localhost/payments/paylink-callback")
+os.environ.setdefault(
+    "PAYLINK_CALLBACK_URL", "http://localhost/payments/paylink-callback"
+)
 os.environ.setdefault("PAYLINK_RETURN_URL", "http://localhost/return")
 
 from database import Base, get_db
+
 from main import app as _app
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -73,5 +77,7 @@ async def app(engine):
 @pytest_asyncio.fixture
 async def client(app) -> AsyncClient:
     """Create test HTTP client."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         yield ac

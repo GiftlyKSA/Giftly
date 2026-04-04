@@ -1,22 +1,28 @@
 """
 Domain object fixtures for the test suite.
 """
-import sys
+
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import pytest
+from datetime import datetime, timedelta, timezone
+
 import pytest_asyncio
-from datetime import date, datetime, timezone, timedelta
+from enums import ConversationStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
-    City, Order, OrderStatus, Invoice, InvoiceStatus,
-    Conversation, ConversationStatus, Message, Wallet, Payment, PaymentStatus,
-    Promocode, PromocodeUsage, CourierProfile, CustomerProfile, RefreshToken,
-    ImportantEvent,
+    City,
+    Conversation,
+    ConversationStatus,
+    Invoice,
+    InvoiceStatus,
+    Order,
+    OrderStatus,
+    Promocode,
 )
-from enums import UserRole, ConversationStatus
 
 
 @pytest_asyncio.fixture
@@ -45,12 +51,14 @@ async def order(db: AsyncSession, customer: User, city: City) -> Order:
     await db.commit()
     await db.refresh(o)
     # create conversation
-    db.add(Conversation(
-        customer_id=customer.id,
-        courier_id=None,
-        order_id=o.id,
-        status=ConversationStatus.ACTIVE,
-    ))
+    db.add(
+        Conversation(
+            customer_id=customer.id,
+            courier_id=None,
+            order_id=o.id,
+            status=ConversationStatus.ACTIVE,
+        )
+    )
     await db.commit()
     return o
 
@@ -72,9 +80,9 @@ async def invoice(db: AsyncSession, order: Order, customer: User) -> Invoice:
         invoice_id="INV-001",
         order_id=order.id,
         created_by_user_id=customer.id,
-        full_amount=10_000,   # 100 SAR
-        service_fee=1_000,    # 10 SAR
-        courier_fee=2_000,    # 20 SAR
+        full_amount=10_000,  # 100 SAR
+        service_fee=1_000,  # 10 SAR
+        courier_fee=2_000,  # 20 SAR
         order_only_price=9_000,
         status=InvoiceStatus.NEW,
         description="Test invoice",

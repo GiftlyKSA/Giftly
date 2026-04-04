@@ -1,26 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Form
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
-from sqlalchemy import select
-from utils.database.database import get_db
-from models import Invoice, Order, InvoiceStatus
-from schemas import CreateInvoice, InvoiceResponse
-from utils.auth.auth import get_current_user
-import uuid
 import os
 import tempfile
 import time
+import uuid
 from datetime import datetime
+from io import BytesIO
 from threading import Timer
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, status
+from fastapi.responses import FileResponse
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from io import BytesIO
-from fastapi.responses import FileResponse
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+
+from models import Invoice, InvoiceStatus, Order
+from schemas import CreateInvoice, InvoiceResponse
+from utils.auth.auth import get_current_user
+from utils.database.database import get_db
 
 router = APIRouter()
 
@@ -82,15 +84,15 @@ async def create_invoice(
     # Emit order status change event
     from utils.websocket.websocket_events import emit_order_status_change
 
-     await emit_order_status_change(order.id, order.status)
-     
-     # Emit invoice creation event
-     from utils.websocket.websocket_events import emit_invoice_created
-     
-     await emit_invoice_created(new_invoice.id, new_invoice.order_id)
+    await emit_order_status_change(order.id, order.status)
 
-     # Send chat message about invoice creation
-     from utils.websocket.websocket_events import emit_chat_message
+    # Emit invoice creation event
+    from utils.websocket.websocket_events import emit_invoice_created
+
+    await emit_invoice_created(new_invoice.id, new_invoice.order_id)
+
+    # Send chat message about invoice creation
+    from utils.websocket.websocket_events import emit_chat_message
 
     await emit_chat_message(
         conversation_id=None,  # Will be found by order
@@ -218,8 +220,8 @@ async def update_invoice_by_courier(
     await db.commit()
     await db.refresh(invoice)
 
-     # Send chat message about invoice update
-     from utils.websocket.websocket_events import emit_chat_message
+    # Send chat message about invoice update
+    from utils.websocket.websocket_events import emit_chat_message
 
     await emit_chat_message(
         conversation_id=None,  # Will be found by order

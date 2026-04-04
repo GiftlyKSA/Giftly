@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from database import get_db
-from models import CourierProfile, User
 from auth import get_current_user
+from database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from models import CourierProfile, User
 from models.enums import UserRole
 
 router = APIRouter()
@@ -17,9 +18,13 @@ async def toggle_availability(
 ):
     """Toggle courier availability on/off. Couriers only."""
     if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can toggle availability")
+        raise HTTPException(
+            status_code=403, detail="Only couriers can toggle availability"
+        )
 
-    result = await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))
+    result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
+    )
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Courier profile not found")

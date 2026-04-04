@@ -1,18 +1,20 @@
 """
 User-related fixtures for the test suite.
 """
-import sys
+
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import pytest
-import pytest_asyncio
 from datetime import date
+
+import pytest_asyncio
+from auth import create_tokens
+from enums import UserRole
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import User, Wallet, CustomerProfile, CourierProfile, RefreshToken
-from enums import UserRole, ConversationStatus
-from auth import create_tokens
+from models import CourierProfile, CustomerProfile, User, Wallet
 
 
 @pytest_asyncio.fixture
@@ -50,14 +52,16 @@ async def courier(db: AsyncSession, city: City) -> User:
     await db.commit()
     await db.refresh(u)
     db.add(Wallet(user_id=u.id, balance=0))
-    db.add(CourierProfile(
-        user_id=u.id,
-        national_id="1234567890",
-        city_id=city.id,
-        iban="SA1234567890123456789012",
-        is_approved=True,
-        is_available=True,
-    ))
+    db.add(
+        CourierProfile(
+            user_id=u.id,
+            national_id="1234567890",
+            city_id=city.id,
+            iban="SA1234567890123456789012",
+            is_approved=True,
+            is_available=True,
+        )
+    )
     await db.commit()
     return u
 
@@ -77,14 +81,16 @@ async def unapproved_courier(db: AsyncSession, city: City) -> User:
     await db.commit()
     await db.refresh(u)
     db.add(Wallet(user_id=u.id, balance=0))
-    db.add(CourierProfile(
-        user_id=u.id,
-        national_id="0987654321",
-        city_id=city.id,
-        iban="SA9876543210123456789012",
-        is_approved=False,
-        is_available=False,
-    ))
+    db.add(
+        CourierProfile(
+            user_id=u.id,
+            national_id="0987654321",
+            city_id=city.id,
+            iban="SA9876543210123456789012",
+            is_approved=False,
+            is_available=False,
+        )
+    )
     await db.commit()
     return u
 

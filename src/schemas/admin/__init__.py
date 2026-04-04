@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, validator
-from typing import Optional
-from datetime import date, datetime
 import re
+from datetime import date, datetime
 from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, EmailStr, validator
 
 
 class OrderStatusEnum(str, Enum):

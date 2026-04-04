@@ -1,6 +1,7 @@
-import httpx
-from typing import Dict, Any, Optional
 import json
+from typing import Any, Dict
+
+import httpx
 
 
 class PaylinkClient:
@@ -25,9 +26,9 @@ class PaylinkClient:
             headers={
                 "X-API-KEY": self.api_key,
                 "Content-Type": "application/json",
-                "Accept": "application/json"
+                "Accept": "application/json",
             },
-            timeout=30.0
+            timeout=30.0,
         )
 
     async def __aenter__(self):
@@ -127,11 +128,11 @@ async def example_usage():
             "customer": {
                 "name": "John Doe",
                 "email": "john@example.com",
-                "phone": "966501234567"
+                "phone": "966501234567",
             },
             "orderNumber": "ORD-001",
             "callBackUrl": "https://yourwebsite.com/callback",
-            "returnUrl": "https://yourwebsite.com/return"
+            "returnUrl": "https://yourwebsite.com/return",
         }
 
         try:
@@ -150,22 +151,25 @@ async def example_usage():
             "customer": {
                 "name": "Jane Smith",
                 "email": "jane@example.com",
-                "phone": "966509876543"
+                "phone": "966509876543",
             },
             "invoiceNumber": "INV-001",
             "callBackUrl": "https://yourwebsite.com/callback",
-            "returnUrl": "https://yourwebsite.com/return"
+            "returnUrl": "https://yourwebsite.com/return",
         }
 
         try:
             invoice_response = await client.create_invoice(invoice_data)
             print("Invoice created:", json.dumps(invoice_response, indent=2))
         except httpx.HTTPStatusError as e:
-            print(f"Error creating invoice: {e.response.status_code} - {e.response.text}")
+            print(
+                f"Error creating invoice: {e.response.status_code} - {e.response.text}"
+            )
         except Exception as e:
             print(f"Unexpected error: {e}")
 
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(example_usage())

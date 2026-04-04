@@ -1,29 +1,14 @@
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    status,
-    Query,
-    Response,
-    Form,
-    File,
-    UploadFile,
-)
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, select
-from database import get_db
-from models import Conversation, Message, User, Order
-from schemas import (
-    CreateConversationRequest,
-    ConversationResponse,
-    SendMessageRequest,
-    MessageResponse,
-)
-from auth import get_current_user
-from utils.clients.storage_client import upload_media
 from typing import List
-import base64
+
+from auth import get_current_user
+from database import get_db
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models import Conversation, Message, Order, User
+from schemas import ConversationResponse, CreateConversationRequest, MessageResponse
+from utils.clients.storage_client import upload_media
 
 router = APIRouter()
 

@@ -12,7 +12,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def send_push_notification(push_token: str, title: str, body: str, data: dict = None) -> None:
+async def send_push_notification(
+    push_token: str, title: str, body: str, data: dict = None
+) -> None:
     """
     Send a push notification to a device.
 

@@ -1,31 +1,17 @@
+from database import Base
 from sqlalchemy import (
     Column,
-    Integer,
-    String,
-    Boolean,
     DateTime,
-    Date,
-    ForeignKey,
-    Text,
     Enum,
-    UniqueConstraint,
+    ForeignKey,
     Index,
+    Integer,
+    UniqueConstraint,
     text,
-    select,
 )
-from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database import Base
-from .enums import (
-    OrderStatus,
-    InvoiceStatus,
-    PaymentMethod,
-    PaymentStatus,
-    DepositRequestStatus,
-    UserRole,
-    ConversationStatus,
-)
-from sqlalchemy import event
+
+from .enums import ConversationStatus
 
 
 class Conversation(Base):
