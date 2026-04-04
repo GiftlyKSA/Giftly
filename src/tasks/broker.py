@@ -1,4 +1,4 @@
-from config import settings
+from utils.database.config import settings
 from taskiq_redis import ListQueueBroker
 
 # Redis-backed broker using a simple list queue (LPUSH / BRPOP).

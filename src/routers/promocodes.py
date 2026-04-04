@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List
 
-from database import get_db
+from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 
-from config import settings
+from utils.database.config import settings
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request

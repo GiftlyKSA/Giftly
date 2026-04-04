@@ -1,4 +1,4 @@
-from database import AsyncSessionLocal
+from utils.database.database import AsyncSessionLocal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from websocket_manager import manager

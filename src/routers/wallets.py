@@ -1,6 +1,6 @@
 from auth import get_current_user
-from config import settings
-from database import get_db
+from utils.database.config import settings
+from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

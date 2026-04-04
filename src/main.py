@@ -3,7 +3,7 @@ import os
 from contextlib import asynccontextmanager
 
 import bcrypt
-from admin import (
+from utils.admin.admin import (
     AdminAdmin,
     CityAdmin,
     ConversationAdmin,
@@ -16,8 +16,8 @@ from admin import (
     UserAdmin,
     WalletAdmin,
 )
-from config import settings
-from database import AsyncSessionLocal, Base, engine
+from utils.database.config import settings
+from utils.database.database import AsyncSessionLocal, Base, engine
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from jose import JWTError, jwt
 from sqladmin import Admin
 from sqlalchemy import select
-from websocket_manager import manager
+from utils.websocket.websocket_manager import manager
 
 import tasks.email_tasks  # noqa: F401 — registers task decorators with the broker
 from middleware.activity import LastActivityMiddleware

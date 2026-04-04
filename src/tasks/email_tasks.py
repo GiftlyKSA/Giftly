@@ -11,9 +11,9 @@ Worker startup command:
 
 import logging
 
-from database import AsyncSessionLocal
+from utils.database.database import AsyncSessionLocal
 
-from utils.background_email import (
+from utils.email.background_email import (
     send_invoice_email_background,
     send_payment_confirmation_email_background,
     send_welcome_email_background,

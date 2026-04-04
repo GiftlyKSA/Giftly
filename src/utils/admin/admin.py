@@ -1,7 +1,7 @@
 import base64
 
-from auth import verify_password
-from database import AsyncSessionLocal as SessionLocal
+from utils.auth.auth import verify_password
+from utils.database.database import AsyncSessionLocal as SessionLocal
 from fastapi import Request
 from sqladmin import Admin, ModelView
 from wtforms import DateField
@@ -20,7 +20,7 @@ from models import (
     Wallet,
 )
 
-from .models.enums import UserRole
+from models.enums import UserRole
 
 
 class UserAdmin(ModelView, model=User):

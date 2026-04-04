@@ -1,5 +1,5 @@
 from auth import get_current_customer
-from database import get_db
+from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

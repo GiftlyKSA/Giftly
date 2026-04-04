@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from auth import verify_password
-from database import get_db
+from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import select

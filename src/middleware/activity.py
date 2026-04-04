@@ -11,8 +11,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from config import settings
-from database import AsyncSessionLocal
+from utils.database.config import settings
+from utils.database.database import AsyncSessionLocal
 from jose import JWTError, jwt
 from sqlalchemy import update
 from starlette.middleware.base import BaseHTTPMiddleware

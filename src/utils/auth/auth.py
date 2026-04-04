@@ -5,8 +5,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
-from config import settings
-from database import get_db
+from utils.database.config import settings
+from utils.database.database import get_db
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer
 from jose import JWTError, jwt

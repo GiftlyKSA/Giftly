@@ -1,4 +1,4 @@
-from database import get_db
+from utils.database.database import get_db
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

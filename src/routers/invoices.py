@@ -1,7 +1,6 @@
 import os
 import tempfile
 import time
-import uuid
 from datetime import datetime
 from io import BytesIO
 from threading import Timer
@@ -12,12 +11,9 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from models import Invoice, InvoiceStatus, Order
 from schemas import CreateInvoice, InvoiceResponse

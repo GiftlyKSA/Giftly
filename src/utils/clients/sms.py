@@ -11,7 +11,7 @@ To go live:
 
 import logging
 
-from config import settings
+from utils.database.config import settings
 
 logger = logging.getLogger(__name__)
 

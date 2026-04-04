@@ -4,8 +4,8 @@ import uuid
 from typing import Dict
 
 import boto3
-from config import settings
-from enums import ImageType
+from utils.database.config import settings
+from models.enums import ImageType
 from fastapi import UploadFile
 
 

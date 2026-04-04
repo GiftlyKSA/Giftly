@@ -18,7 +18,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from auth import create_access_token
+from utils.auth.auth import create_access_token
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

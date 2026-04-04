@@ -1,4 +1,3 @@
-import mimetypes
 import traceback
 from datetime import datetime, time, timezone
 

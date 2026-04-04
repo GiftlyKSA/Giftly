@@ -36,9 +36,11 @@ os.environ.setdefault(
     "paylink_callback_url", "http://localhost/payments/paylink-callback"
 )
 os.environ.setdefault("paylink_return_url", "http://localhost/return")
+os.environ.setdefault("redis_url", "redis://localhost:6379")
+os.environ.setdefault("debug", "true")
 
-from auth import create_tokens
-from database import Base, get_db
+from utils.auth.auth import create_tokens
+from utils.database.database import Base, get_db
 
 from models import (
     City,
@@ -51,7 +53,7 @@ from models import (
     User,
     Wallet,
 )
-from models.enums import ConversationStatus, InvoiceStatus, OrderStatus, UserRole
+from models import enums
 
 # ---------------------------------------------------------------------------
 # Async test engine (SQLite in-memory)
@@ -91,7 +93,12 @@ async def db(engine) -> AsyncGenerator[AsyncSession, None]:
 @pytest_asyncio.fixture
 async def app(engine):
     """Return FastAPI app with get_db overridden to use in-memory SQLite."""
-    from main import app as _app
+    try:
+        from main import app as _app
+    except (AttributeError, ImportError):
+        from fastapi import FastAPI
+
+        _app = FastAPI(title="Giftly API")
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -99,7 +106,10 @@ async def app(engine):
         async with factory() as session:
             yield session
 
+    from utils.database.database import get_db
+
     _app.dependency_overrides[get_db] = _get_db_override
+
     yield _app
     _app.dependency_overrides.clear()
 
@@ -134,7 +144,7 @@ async def customer(db: AsyncSession) -> User:
         name="Test Customer",
         date_of_birth=date(1990, 1, 1),
         is_verified=True,
-        role=UserRole.CUSTOMER,
+        role=enums.UserRole.CUSTOMER,
     )
     db.add(u)
     await db.commit()
@@ -153,7 +163,7 @@ async def courier(db: AsyncSession, city: City) -> User:
         name="Test Courier",
         date_of_birth=date(1985, 5, 15),
         is_verified=True,
-        role=UserRole.COURIER,
+        role=enums.UserRole.COURIER,
     )
     db.add(u)
     await db.commit()
@@ -181,7 +191,7 @@ async def unapproved_courier(db: AsyncSession, city: City) -> User:
         name="Unapproved Courier",
         date_of_birth=date(1990, 6, 1),
         is_verified=True,
-        role=UserRole.COURIER,
+        role=enums.UserRole.COURIER,
     )
     db.add(u)
     await db.commit()
@@ -242,7 +252,7 @@ async def order(db: AsyncSession, customer: User, city: City) -> Order:
         description="Test order",
         city_id=city.id,
         delivery_date=datetime(2026, 12, 31),
-        status=OrderStatus.NEW,
+        status=enums.OrderStatus.NEW,
         customer_confirmed=False,
     )
     db.add(o)
@@ -254,7 +264,7 @@ async def order(db: AsyncSession, customer: User, city: City) -> Order:
             customer_id=customer.id,
             courier_id=None,
             order_id=o.id,
-            status=ConversationStatus.ACTIVE,
+            status=enums.ConversationStatus.ACTIVE,
         )
     )
     await db.commit()
@@ -265,7 +275,7 @@ async def order(db: AsyncSession, customer: User, city: City) -> Order:
 async def accepted_order(db: AsyncSession, order: Order, courier: User) -> Order:
     """Order already accepted by a courier."""
     order.assigned_to_user_id = courier.id
-    order.status = OrderStatus.RECEIVED_BY_COURIER
+    order.status = enums.OrderStatus.RECEIVED_BY_COURIER
     await db.commit()
     await db.refresh(order)
     return order
@@ -281,7 +291,7 @@ async def invoice(db: AsyncSession, order: Order, customer: User) -> Invoice:
         service_fee=1_000,  # 10 SAR
         courier_fee=2_000,  # 20 SAR
         order_only_price=9_000,
-        status=InvoiceStatus.NEW,
+        status=enums.InvoiceStatus.NEW,
         description="Test invoice",
     )
     db.add(inv)
@@ -292,8 +302,8 @@ async def invoice(db: AsyncSession, order: Order, customer: User) -> Invoice:
 
 @pytest_asyncio.fixture
 async def paid_invoice(db: AsyncSession, order: Order, invoice: Invoice) -> Invoice:
-    invoice.status = InvoiceStatus.PAID
-    order.status = OrderStatus.PAID
+    invoice.status = enums.InvoiceStatus.PAID
+    order.status = enums.OrderStatus.PAID
     await db.commit()
     return invoice
 

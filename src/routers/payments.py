@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from django import db
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
