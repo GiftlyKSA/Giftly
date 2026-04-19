@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,9 +70,8 @@ def _check_phone_verify_rate_limit(phone: str) -> None:
 
 @router.post("/send-otp", response_model=dict)
 async def send_otp(
-    request: Request, otp_request: SendOTP, db: AsyncSession = Depends(get_db)
+    otp_request: SendOTP, db: AsyncSession = Depends(get_db)
 ):
-    # Note: `request` is kept for IP-based rate-limiting in future (e.g. slowapi)
     phone_number = otp_request.phone_number
 
     # Per-phone rate limit (3 requests / 10 min)

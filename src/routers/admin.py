@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from auth import verify_password
+from utils.auth.auth import verify_password
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials

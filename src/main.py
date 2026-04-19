@@ -1,8 +1,9 @@
 import base64
-import os
+import logging
 from contextlib import asynccontextmanager
 
 import bcrypt
+from starlette.middleware.base import BaseHTTPMiddleware
 from utils.admin.admin import (
     AdminAdmin,
     CityAdmin,
@@ -17,7 +18,7 @@ from utils.admin.admin import (
     WalletAdmin,
 )
 from utils.database.config import settings
-from utils.database.database import AsyncSessionLocal, Base, engine
+from utils.database.database import AsyncSessionLocal, engine
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -28,14 +29,14 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, RedirectResponse
 from jose import JWTError, jwt
-from sqladmin import Admin
+from sqladmin import Admin as SQLAdmin
 from sqlalchemy import select
 from utils.websocket.websocket_manager import manager
 
 import tasks.email_tasks  # noqa: F401 — registers task decorators with the broker
 from middleware.activity import LastActivityMiddleware
 from middleware.logging import RequestLoggingMiddleware
-from models import Admin, Conversation, Message, User
+from models import Admin, Conversation, CourierProfile, Message, User
 from models.enums import UserRole
 from routers import (
     admin,
@@ -52,14 +53,10 @@ from routers import (
 )
 from tasks.broker import broker
 
-print(f"Current working directory: {os.getcwd()}")
-print(f"Database URL: {engine.url}")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Schema is owned by Alembic — run `uv run alembic upgrade head` to apply migrations.
     # Start the broker connection (skipped automatically inside the worker process)
     if not broker.is_worker_process:
         await broker.startup()
@@ -69,8 +66,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # Logging + activity tracking
 app.add_middleware(LastActivityMiddleware)
@@ -182,7 +177,7 @@ async def admin_auth_middleware(request: Request, call_next):
 # SQLAdmin
 # ---------------------------------------------------------------------------
 
-sqladmin = Admin(app, engine, title="Admin Dashboard")
+sqladmin = SQLAdmin(app, engine, title="Admin Dashboard")
 
 sqladmin.add_view(UserAdmin)
 sqladmin.add_view(AdminAdmin)
@@ -210,11 +205,6 @@ def read_root():
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
-
-
-@app.get("/test-scheme")
-async def test_scheme(request: Request):
-    return {"scheme": request.url.scheme, "url": str(request.url)}
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +261,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
 
         # Courier room join: only approved + available couriers
         if user.role == UserRole.COURIER.value:
-            from models import CourierProfile
-
             profile_record = await db.execute(
                 select(CourierProfile).where(CourierProfile.user_id == user.id)
             )
@@ -372,18 +360,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                 user.id,
                             )
                     except Exception as e:
-                        # Log error internally without exposing details to users
-                        import logging
-
                         logging.error(f"WebSocket error sending chat message: {str(e)}")
 
     except WebSocketDisconnect:
         if user:
             manager.disconnect(user.id)
     except Exception as e:
-        # Log error internally without exposing details to users
-        import logging
-
         logging.error(f"WebSocket error: {str(e)}")
         if user:
             manager.disconnect(user.id)

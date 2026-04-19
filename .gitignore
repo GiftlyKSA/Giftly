@@ -29,3 +29,13 @@ __pycache__/
 *.pyd
 
 kilo.json
+
+# Project-local virtualenv created by uv
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local env file (never commit secrets)
+.env
+.env.test
+.env.local

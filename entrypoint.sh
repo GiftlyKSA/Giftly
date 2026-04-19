@@ -1,12 +1,10 @@
-#!/bin/bash
-# Wait for database or services if needed
-# e.g., sleep 5 or use wait-for-it.sh
+#!/usr/bin/env bash
+# Container entrypoint — runs inside the image built by DOCKERFILE.
+# The .venv from `uv sync` is on PATH, so alembic/uvicorn are directly executable.
+set -euo pipefail
 
-# Run your initialization scripts
-python test_scripts_for_admin_dashboard/add_cities.py
-python test_scripts_for_admin_dashboard/create_users.py
-python test_scripts_for_admin_dashboard/check_and_create_admin.py
-python test_scripts_for_admin_dashboard/add_reviews_table.py
+# Apply any pending schema migrations before starting the app.
+alembic upgrade head
 
-# Start the FastAPI app
+cd /app/src
 exec uvicorn main:app --host 0.0.0.0 --port 3000
