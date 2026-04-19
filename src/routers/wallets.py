@@ -1,4 +1,4 @@
-from auth import get_current_user
+from utils.auth.auth import get_current_user
 from utils.database.config import settings
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException

@@ -1,6 +1,6 @@
 from typing import List
 
-from auth import get_current_user
+from utils.auth.auth import get_current_user
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import desc, select

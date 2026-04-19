@@ -127,8 +127,8 @@ async def test_cancel_order_with_paid_invoice_rejected(
 # ---------------------------------------------------------------------------
 
 
-@patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_chat_message", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
 @patch("websocket_manager.manager.send_to_user", new_callable=AsyncMock)
 async def test_accept_order_by_approved_courier(
     mock_ws, mock_status, mock_chat, client, courier_headers, order: Order
@@ -197,7 +197,7 @@ async def test_confirm_delivery_by_courier_rejected(
 # ---------------------------------------------------------------------------
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
 async def test_complete_order_success(
     mock_status,
     client,
@@ -221,7 +221,7 @@ async def test_complete_order_success(
     assert resp.json()["status"] == "DONE"
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
 async def test_complete_order_without_customer_confirm_fails(
     mock_status,
     client,
@@ -246,7 +246,7 @@ async def test_complete_order_without_customer_confirm_fails(
     )
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
 async def test_complete_order_without_paid_invoice_fails(
     mock_status, client, courier_headers, accepted_order: Order, db: AsyncSession
 ):

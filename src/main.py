@@ -94,8 +94,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 class ForceHTTPSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         # Check if request is HTTP and redirect to HTTPS
-        if request.url.scheme == "http":
-            # Build HTTPS URL
+        if request.url.scheme == "http" and not settings.debug:
             https_url = str(request.url).replace("http://", "https://", 1)
             return RedirectResponse(
                 url=https_url, status_code=status.HTTP_301_MOVED_PERMANENTLY

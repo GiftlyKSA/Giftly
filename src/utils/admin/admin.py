@@ -34,7 +34,6 @@ class UserAdmin(ModelView, model=User):
         User.otp,
         User.otp_created_at,
         User.role,
-        User.city,
     ]
     column_searchable_list = [User.phone_number, User.email, User.name]
     # column_filters = [User.is_verified, User.role]

@@ -36,8 +36,8 @@ async def test_get_wallet_requires_auth(client):
 # ---------------------------------------------------------------------------
 
 
-@patch("paylink_client.PaylinkClient.__aenter__", new_callable=AsyncMock)
-@patch("paylink_client.PaylinkClient.__aexit__", new_callable=AsyncMock)
+@patch("utils.clients.paylink.PaylinkClient.__aenter__", new_callable=AsyncMock)
+@patch("utils.clients.paylink.PaylinkClient.__aexit__", new_callable=AsyncMock)
 async def test_initiate_charge_below_minimum(
     mock_exit, mock_enter, client, customer_headers
 ):

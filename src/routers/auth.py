@@ -355,7 +355,11 @@ async def complete_profile(
     email = profile_data.get("email")
     date_of_birth_str = profile_data.get("date_of_birth")
     timezone_val = profile_data.get("timezone")
-    role = profile_data.get("role", "Customer")
+    role_str = profile_data.get("role", "Customer")
+    try:
+        role = UserRole(role_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid role")
 
     if not all([phone_number, name, email, date_of_birth_str]):
         raise HTTPException(

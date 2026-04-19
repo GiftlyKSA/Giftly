@@ -62,7 +62,7 @@ from models import enums
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def engine():
     eng = create_async_engine(
         TEST_DATABASE_URL,
@@ -107,10 +107,18 @@ async def app(engine):
             yield session
 
     from utils.database.database import get_db
+    from unittest.mock import patch
 
     _app.dependency_overrides[get_db] = _get_db_override
 
-    yield _app
+    with (
+        patch("utils.database.database.AsyncSessionLocal", factory),
+        patch("utils.websocket.websocket_events.AsyncSessionLocal", factory),
+        patch("middleware.activity.AsyncSessionLocal", factory),
+        patch("main.AsyncSessionLocal", factory),
+    ):
+        yield _app
+
     _app.dependency_overrides.clear()
 
 
@@ -139,7 +147,7 @@ async def city(db: AsyncSession) -> City:
 @pytest_asyncio.fixture
 async def customer(db: AsyncSession) -> User:
     u = User(
-        phone_number="+966500000001",
+        phone_number="500000001",
         email="customer@test.com",
         name="Test Customer",
         date_of_birth=date(1990, 1, 1),
@@ -158,7 +166,7 @@ async def customer(db: AsyncSession) -> User:
 @pytest_asyncio.fixture
 async def courier(db: AsyncSession, city: City) -> User:
     u = User(
-        phone_number="+966500000002",
+        phone_number="500000002",
         email="courier@test.com",
         name="Test Courier",
         date_of_birth=date(1985, 5, 15),
@@ -186,7 +194,7 @@ async def courier(db: AsyncSession, city: City) -> User:
 @pytest_asyncio.fixture
 async def unapproved_courier(db: AsyncSession, city: City) -> User:
     u = User(
-        phone_number="+966500000003",
+        phone_number="500000003",
         email="unapproved@test.com",
         name="Unapproved Courier",
         date_of_birth=date(1990, 6, 1),

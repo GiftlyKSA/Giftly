@@ -51,7 +51,8 @@ async def test_send_otp_new_user_creates_user(mock_sms, client, db: AsyncSession
     assert resp.status_code == 200
     assert "OTP sent" in resp.json()["message"]
 
-    result = await db.execute(select(User).where(User.phone_number == phone))
+    normalized = phone.lstrip("+966").lstrip("0")
+    result = await db.execute(select(User).where(User.phone_number == normalized))
     user = result.scalar_one_or_none()
     assert user is not None
     assert user.otp is not None
@@ -97,8 +98,9 @@ async def test_verify_otp_expired(mock_sms, client, db: AsyncSession):
     phone = "+966511111202"
     await _send_otp(client, phone)
 
+    normalized = phone.lstrip("+966").lstrip("0")
     # Wind back otp_created_at so it looks expired
-    result = await db.execute(select(User).where(User.phone_number == phone))
+    result = await db.execute(select(User).where(User.phone_number == normalized))
     user = result.scalar_one()
     user.otp_created_at = datetime.now(timezone.utc) - timedelta(seconds=200)
     await db.commit()
@@ -114,7 +116,8 @@ async def test_verify_otp_new_user_returns_needs_profile(
 ):
     phone = "+966511111203"
     await _send_otp(client, phone)
-    result = await db.execute(select(User).where(User.phone_number == phone))
+    normalized = phone.lstrip("+966").lstrip("0")
+    result = await db.execute(select(User).where(User.phone_number == normalized))
     user = result.scalar_one()
     otp = user.otp
 
@@ -155,7 +158,7 @@ async def test_verify_otp_existing_verified_customer(
 
 
 @patch("routers.auth.send_sms", new_callable=AsyncMock)
-@patch("utils.background_email.send_welcome_email_background", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_welcome_email_task.kiq", new_callable=AsyncMock)
 async def test_complete_profile(mock_email, mock_sms, client, db: AsyncSession):
     phone = "+966511111301"
     await _send_otp(client, phone)

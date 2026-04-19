@@ -33,8 +33,8 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
-@patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_wallet_payment_success(
     mock_chat,
     mock_status,
@@ -57,8 +57,8 @@ async def test_wallet_payment_success(
     assert invoice.status == InvoiceStatus.PAID
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
-@patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_wallet_payment_with_valid_coupon(
     mock_chat,
     mock_status,
@@ -104,8 +104,8 @@ async def test_wallet_payment_expired_coupon(
     assert resp.status_code == 400
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
-@patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_wallet_payment_duplicate_coupon_use_rejected(
     mock_chat,
     mock_status,
@@ -203,8 +203,8 @@ async def test_wallet_payment_wrong_user_rejected(
 # ---------------------------------------------------------------------------
 
 
-@patch("websocket_events.emit_order_status_change", new_callable=AsyncMock)
-@patch("websocket_events.emit_chat_message", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_events.emit_chat_message", new_callable=AsyncMock)
 async def test_paylink_callback_paid_marks_invoice(
     mock_chat, mock_status, client, db: AsyncSession, invoice: Invoice, customer
 ):

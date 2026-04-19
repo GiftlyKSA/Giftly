@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import random
 import re
 import string
@@ -13,8 +15,10 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models import RefreshToken, User
+from models.enums import UserRole
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
@@ -55,15 +59,14 @@ async def create_tokens(
     access_delta = timedelta(minutes=settings.access_token_expire_minutes)
     refresh_delta = timedelta(days=settings.refresh_token_expire_days)
 
-    # city_id lives on CourierProfile, not User directly
-    city_id = None
-    if hasattr(user, "courier_profile") and user.courier_profile:
-        city_id = user.courier_profile.city_id
+    await db.refresh(user, attribute_names=["courier_profile", "customer_profile"])
+
+    city_id = user.courier_profile.city_id if user.courier_profile else None
 
     access_payload = {
         "sub": str(user.id),
         "phone_number": user.phone_number,
-        "role": user.role,
+        "role": user.role.value if hasattr(user.role, "value") else user.role,
         "name": user.name,
         "is_verified": user.is_verified,
         "city_id": city_id,
@@ -76,8 +79,7 @@ async def create_tokens(
     refresh_payload = {"sub": str(user.id), "type": "refresh", "jti": jti_value}
     refresh_token = create_refresh_token(refresh_payload, refresh_delta)
 
-    # Truncate to 72 bytes before hashing (bcrypt ignores bytes beyond 72)
-    token_hash = pwd_context.hash(refresh_token[:72])
+    token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
     refresh_db = RefreshToken(
         user_id=user.id,
         token_hash=token_hash,
@@ -125,7 +127,11 @@ async def get_current_user(
     except (JWTError, ValueError):
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.courier_profile), selectinload(User.customer_profile))
+        .where(User.id == user_id)
+    )
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
@@ -162,7 +168,8 @@ async def validate_refresh_token(
         )
     )
     rt = result.scalar_one_or_none()
-    if rt and pwd_context.verify(token[:72], rt.token_hash):
+    expected = hashlib.sha256(token.encode()).hexdigest()
+    if rt and hmac.compare_digest(expected, rt.token_hash):
         return user_id, rt
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -175,7 +182,7 @@ async def get_current_customer(
     db: AsyncSession = Depends(get_db), token: str = Depends(security)
 ) -> User:
     user = await get_current_user(db, token)
-    if user.role != "Customer":
+    if user.role != UserRole.CUSTOMER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This endpoint is only available for customers",
@@ -187,7 +194,7 @@ async def get_current_courier(
     db: AsyncSession = Depends(get_db), token: str = Depends(security)
 ) -> User:
     user = await get_current_user(db, token)
-    if user.role != "Courier":
+    if user.role != UserRole.COURIER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This endpoint is only available for couriers",

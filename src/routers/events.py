@@ -1,4 +1,4 @@
-from auth import get_current_customer
+from utils.auth.auth import get_current_customer
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select

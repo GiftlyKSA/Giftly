@@ -2,6 +2,7 @@ from .admin.admin import Admin
 from .city import City
 from .conversation import Conversation
 from .courier.courier_profile import CourierProfile
+from .courier_balance_addition import CourierBalanceAddition
 from .courier_review import CourierReview
 from .customer.customer_profile import CustomerProfile
 from .deposit_request import DepositRequest
@@ -28,6 +29,7 @@ from .wallet import Wallet
 
 __all__ = [
     "Admin",
+    "CourierBalanceAddition",
     "CourierProfile",
     "CustomerProfile",
     "User",

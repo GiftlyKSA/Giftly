@@ -15,7 +15,5 @@ class City(Base):
     icon = Column(String, nullable=True)
     active = Column(Boolean, default=True)
 
-    # Relationship to users
-    users = relationship("User", back_populates="city")
     # Relationship to orders
     orders = relationship("Order", back_populates="city")
