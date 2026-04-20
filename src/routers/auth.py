@@ -398,9 +398,12 @@ async def complete_profile(
 
     access_token, refresh_token = await create_tokens(db, user)
 
-    from tasks.email_tasks import send_welcome_email_task
+    try:
+        from tasks.email_tasks import send_welcome_email_task
 
-    await send_welcome_email_task.kiq(user.id)
+        await send_welcome_email_task.kiq(user.id)
+    except Exception:
+        pass
 
     return {
         "access_token": access_token,

@@ -183,8 +183,6 @@ async def test_complete_profile(mock_email, mock_sms, client, db: AsyncSession):
     result = await db.execute(select(User).where(User.phone_number == normalized))
     user = result.scalar_one()
     assert user.is_verified is True
-    # Wallet created
-    assert user.wallet is not None or True  # relationship may not be loaded
 
 
 @patch("routers.auth.send_sms", new_callable=AsyncMock)
