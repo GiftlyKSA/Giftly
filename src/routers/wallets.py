@@ -13,6 +13,7 @@ from models import (
     PaymentStatus,
     Wallet,
 )
+from models.enums import UserRole
 from schemas import RequestWalletDeposit, WalletResponse
 from utils.clients.paylink import PaylinkClient
 
@@ -115,7 +116,7 @@ async def request_wallet_deposit(
     db: AsyncSession = Depends(get_db),
 ):
     """Request a payout from courier wallet balance. Requires admin approval."""
-    if current_user.role != "Courier":
+    if current_user.role != UserRole.COURIER:
         raise HTTPException(
             status_code=403, detail="Only couriers can request wallet deposits"
         )

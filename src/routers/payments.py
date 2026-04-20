@@ -282,6 +282,23 @@ async def paylink_callback(
     return {"message": "Callback processed"}
 
 
+@router.get("/my-payments", response_model=List[PaymentResponse])
+async def get_my_payments(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Payment)
+        .where(Payment.user_id == current_user.id, Payment.deleted_at.is_(None))
+        .order_by(Payment.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
 @router.get("/{payment_id}", response_model=PaymentResponse)
 async def get_payment(
     payment_id: int,
@@ -319,23 +336,6 @@ async def get_payments_by_invoice(
     result = await db.execute(
         select(Payment)
         .where(Payment.invoice_id == invoice_id, Payment.deleted_at.is_(None))
-        .offset(skip)
-        .limit(limit)
-    )
-    return result.scalars().all()
-
-
-@router.get("/my-payments", response_model=List[PaymentResponse])
-async def get_my_payments(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(Payment)
-        .where(Payment.user_id == current_user.id, Payment.deleted_at.is_(None))
-        .order_by(Payment.created_at.desc())
         .offset(skip)
         .limit(limit)
     )
@@ -462,40 +462,43 @@ async def pay_with_wallet(
             from models import Message
             from utils.websocket.websocket_events import emit_chat_message
 
-        content = (
-            f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {payment_amount / 100:.2f} ريال"
-        )
-        if coupon_used:
-            content += f"\n(تم تطبيق خصم: {discount_amount / 100:.2f} ريال)"
-        msg = Message(
-            conversation_id=invoice.order.conversation.id,
-            sender_id=current_user.id,
-            content=content,
-            message_type="text",
-        )
-        db.add(msg)
-        await db.commit()
-        await db.refresh(msg)
-        await emit_chat_message(
-            invoice.order.conversation.id,
-            {
-                "id": msg.id,
-                "conversation_id": msg.conversation_id,
-                "sender_id": msg.sender_id,
-                "content": msg.content,
-                "message_type": msg.message_type,
-                "sent_at": msg.sent_at.isoformat(),
-            },
-            db,
-        )
+            content = (
+                f"تم دفع الفاتورة بنجاح - المبلغ المدفوع: {payment_amount / 100:.2f} ريال"
+            )
+            if coupon_used:
+                content += f"\n(تم تطبيق خصم: {discount_amount / 100:.2f} ريال)"
+            msg = Message(
+                conversation_id=invoice.order.conversation.id,
+                sender_id=current_user.id,
+                content=content,
+                message_type="text",
+            )
+            db.add(msg)
+            await db.commit()
+            await db.refresh(msg)
+            await emit_chat_message(
+                invoice.order.conversation.id,
+                {
+                    "id": msg.id,
+                    "conversation_id": msg.conversation_id,
+                    "sender_id": msg.sender_id,
+                    "content": msg.content,
+                    "message_type": msg.message_type,
+                    "sent_at": msg.sent_at.isoformat(),
+                },
+                db,
+            )
 
         from utils.websocket.websocket_events import emit_order_status_change
 
         await emit_order_status_change(invoice.order.id, invoice.order.status.value)
 
-        from tasks.email_tasks import send_invoice_email_task
+        try:
+            from tasks.email_tasks import send_invoice_email_task
 
-        await send_invoice_email_task.kiq(invoice.id)
+            await send_invoice_email_task.kiq(invoice.id)
+        except Exception:
+            pass
 
         return {
             "message": f"Payment successful{f'. Discount: {discount_amount / 100:.2f} SAR' if coupon_used else ''}",

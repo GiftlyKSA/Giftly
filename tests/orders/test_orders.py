@@ -81,7 +81,7 @@ async def test_cancel_order_by_customer(client, customer_headers, order: Order):
         headers=customer_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["status"] == "CANCELLED"
+    assert resp.json()["status"] == "cancelled"
 
 
 async def test_cancel_order_forbidden_for_courier(
@@ -129,7 +129,7 @@ async def test_cancel_order_with_paid_invoice_rejected(
 
 @patch("utils.websocket.websocket_events.emit_chat_message", new_callable=AsyncMock)
 @patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)
-@patch("websocket_manager.manager.send_to_user", new_callable=AsyncMock)
+@patch("utils.websocket.websocket_manager.manager.send_to_user", new_callable=AsyncMock)
 async def test_accept_order_by_approved_courier(
     mock_ws, mock_status, mock_chat, client, courier_headers, order: Order
 ):
@@ -218,7 +218,7 @@ async def test_complete_order_success(
         headers=courier_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["status"] == "DONE"
+    assert resp.json()["status"] == "done"
 
 
 @patch("utils.websocket.websocket_events.emit_order_status_change", new_callable=AsyncMock)

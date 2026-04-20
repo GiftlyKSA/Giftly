@@ -650,7 +650,7 @@ async def get_courier_stats(
 
 @router.put("/{order_id}/complete", response_model=OrderResponse)
 async def complete_order(
-    order: str,
+    order_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -663,6 +663,7 @@ async def complete_order(
         .options(selectinload(Order.invoice))
         .where(Order.order_id == order_id)
     )
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -693,11 +694,9 @@ async def complete_order(
         await db.execute(
             update(Wallet)
             .where(Wallet.user_id == current_user.id)
-            .update(
-                {
-                    Wallet.balance: Wallet.balance + courier_fee,
-                    Wallet.updated_at: datetime.now(timezone.utc),
-                }
+            .values(
+                balance=Wallet.balance + courier_fee,
+                updated_at=datetime.now(timezone.utc),
             )
         )
         # Get updated balance for logging/record keeping

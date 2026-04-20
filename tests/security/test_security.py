@@ -14,6 +14,7 @@ Covers:
 - Health endpoint is public (no auth)
 """
 
+import re
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -142,9 +143,10 @@ async def test_xss_in_name_safe(mock_sms, client, db: AsyncSession):
     """XSS payload in name should be stored as plain text, not executed."""
     phone = "+966511111901"
     await client.post("/auth/send-otp", json={"phone_number": phone})
+    normalized = re.sub(r"^(\+966|0)+", "", phone)
     result = await db.execute(
         select(__import__("models").User).where(
-            __import__("models").User.phone_number == phone
+            __import__("models").User.phone_number == normalized
         )
     )
     user = result.scalar_one()

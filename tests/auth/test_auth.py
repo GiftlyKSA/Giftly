@@ -10,6 +10,7 @@ Covers:
 - Security: OTP not in response, rate limiting, expired tokens
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -178,7 +179,8 @@ async def test_complete_profile(mock_email, mock_sms, client, db: AsyncSession):
     assert body["access_token"]
     assert body["needs_profile"] is False
 
-    result = await db.execute(select(User).where(User.phone_number == phone))
+    normalized = re.sub(r"^(\+966|0)+", "", phone)
+    result = await db.execute(select(User).where(User.phone_number == normalized))
     user = result.scalar_one()
     assert user.is_verified is True
     # Wallet created

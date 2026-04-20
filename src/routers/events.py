@@ -1,4 +1,4 @@
-from utils.auth.auth import get_current_customer
+from utils.auth.auth import get_current_user
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -17,7 +17,7 @@ router = APIRouter()
 @router.post("/", response_model=ImportantEventResponse)
 async def create_important_event(
     event_data: CreateImportantEventRequest,
-    current_user=Depends(get_current_customer),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new important event for the current customer"""
@@ -39,7 +39,7 @@ async def create_important_event(
 async def get_important_events(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    current_user=Depends(get_current_customer),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all important events for the current customer"""
@@ -57,7 +57,7 @@ async def get_important_events(
 @router.get("/{event_id}", response_model=ImportantEventResponse)
 async def get_important_event(
     event_id: int,
-    current_user=Depends(get_current_customer),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific important event by ID"""
@@ -80,7 +80,7 @@ async def get_important_event(
 async def update_important_event(
     event_id: int,
     event_data: UpdateImportantEventRequest,
-    current_user=Depends(get_current_customer),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an important event"""
@@ -113,7 +113,7 @@ async def update_important_event(
 @router.delete("/{event_id}")
 async def delete_important_event(
     event_id: int,
-    current_user=Depends(get_current_customer),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an important event"""
