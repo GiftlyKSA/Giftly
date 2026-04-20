@@ -389,7 +389,9 @@ async def complete_profile(
     user.is_verified = True
     user.role = role
 
-    db.add(CustomerProfile(user_id=user.id, timezone=timezone_val))
+    if role == UserRole.CUSTOMER:
+        db.add(CustomerProfile(user_id=user.id, timezone=timezone_val))
+    # Courier profile is created through a separate onboarding flow
     await db.commit()
     await db.refresh(user)
 

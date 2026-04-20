@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Security headers
     hsts_max_age_seconds: int = 31536000
 
+    # Storage base URL for public asset CDN (Cloudflare R2 / S3)
+    storage_base_url: str = "https://storage-giftly-storage.cranl.net"
+
+    # CORS allowed origins — comma-separated list or JSON array in .env
+    allowed_origins: list[str] = ["*"]
+
     def model_post_init(self, __context) -> None:
         # Validate secret_key strength
         if len(self.secret_key) < 32:

@@ -1,7 +1,7 @@
 import hashlib
 import hmac
-import random
 import re
+import secrets
 import string
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -93,7 +93,7 @@ async def create_tokens(
 
 
 def generate_otp() -> str:
-    return "".join(random.choices(string.digits, k=6))
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 async def get_user_by_phone(db: AsyncSession, phone_number: str) -> Optional[User]:

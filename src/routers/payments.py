@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import func
@@ -264,16 +264,17 @@ async def paylink_callback(
                     if total_paid >= invoice.full_amount:
                         await _mark_invoice_paid(invoice, total_paid, payer, db)
 
-        # Wallet top-up: credit the wallet
+        # Wallet top-up: credit atomically to prevent double-credit race condition
         else:
-            result_w = await db.execute(
-                select(Wallet).where(Wallet.user_id == payment.user_id)
+            await db.execute(
+                update(Wallet)
+                .where(Wallet.user_id == payment.user_id)
+                .values(
+                    balance=Wallet.balance + payment.amount,
+                    updated_at=datetime.now(timezone.utc),
+                )
             )
-            wallet = result_w.scalar_one_or_none()
-            if wallet:
-                wallet.balance += payment.amount
-                wallet.updated_at = datetime.now(timezone.utc)
-                await db.commit()
+            await db.commit()
 
     else:
         payment.status = PaymentStatus.FAILED

@@ -1,3 +1,5 @@
+import asyncio
+import secrets
 import traceback
 from datetime import datetime, time, timezone
 
@@ -95,9 +97,7 @@ async def create_order(
                     )
             uploaded_images.append((i, img))
 
-    result = await db.execute(select(func.max(Order.id)))
-    max_id = result.scalar() or 0
-    order_id = f"ORDR-{100000 + max_id + 1}"
+    order_id = f"ORDR-{secrets.token_hex(8).upper()}"
 
     new_order = Order(
         order_id=order_id,
@@ -108,28 +108,33 @@ async def create_order(
         status=OrderStatus.NEW,
     )
     db.add(new_order)
-    await db.commit()
+    await db.flush()  # get new_order.id without committing
 
     image_urls = {}
-    for img_num, img_file in uploaded_images:
+    if uploaded_images:
         try:
-            result = await upload_image(
-                user_id=current_user.id,
-                username=current_user.name or f"user_{current_user.id}",
-                image_type=ImageType.ORDER,
-                image=img_file,
-            )
-            image_urls[f"image{img_num}_url"] = result["url"]
+            username = current_user.name or f"user_{current_user.id}"
+            upload_tasks = [
+                upload_image(
+                    user_id=current_user.id,
+                    username=username,
+                    image_type=ImageType.ORDER,
+                    image=img_file,
+                )
+                for _, img_file in uploaded_images
+            ]
+            results = await asyncio.gather(*upload_tasks)
+            image_urls = {
+                f"image{orig_num}_url": r["url"]
+                for (orig_num, _), r in zip(uploaded_images, results)
+            }
         except Exception as e:
-            await db.delete(new_order)
-            await db.commit()
+            await db.rollback()
             raise HTTPException(
-                status_code=500, detail=f"Failed to upload image {img_num}: {str(e)}"
+                status_code=500, detail=f"Failed to upload image: {str(e)}"
             )
 
-    order_images = OrderImage(order_id=new_order.id, **image_urls)
-    db.add(order_images)
-    await db.commit()
+    db.add(OrderImage(order_id=new_order.id, **image_urls))
 
     new_conversation = Conversation(
         customer_id=current_user.id,
@@ -138,68 +143,59 @@ async def create_order(
         status=ConversationStatus.ACTIVE,
     )
     db.add(new_conversation)
-    await db.commit()
-    await db.refresh(new_conversation)
+
+    from models import Message
+
+    messages_to_emit = []
 
     if new_order.description and new_order.description.strip():
-        from models import Message
-        from utils.websocket.websocket_events import emit_chat_message
-
         initial_message = Message(
-            conversation_id=new_conversation.id,
+            conversation_id=None,  # filled after flush
             sender_id=current_user.id,
             content=new_order.description,
             message_type="text",
         )
         db.add(initial_message)
-        await db.commit()
-        await db.refresh(initial_message)
-
-        await emit_chat_message(
-            new_conversation.id,
-            {
-                "id": initial_message.id,
-                "conversation_id": initial_message.conversation_id,
-                "sender_id": initial_message.sender_id,
-                "content": initial_message.content,
-                "message_type": initial_message.message_type,
-                "sent_at": initial_message.sent_at.isoformat(),
-            },
-            db,
-        )
+        messages_to_emit.append(initial_message)
 
     image_messages = []
-    for img_num, (orig_num, img_file) in enumerate(uploaded_images, 1):
-        from models import Message
-
-        image_message = Message(
-            conversation_id=new_conversation.id,
+    for img_num, (orig_num, _) in enumerate(uploaded_images, 1):
+        img_msg = Message(
+            conversation_id=None,  # filled after flush
             sender_id=current_user.id,
             content=f"صورة الطلب {img_num}",
             message_type="image",
-            image_data=image_urls[f"image{orig_num}_url"],
+            media_url=image_urls[f"image{orig_num}_url"],
         )
-        db.add(image_message)
-        image_messages.append(image_message)
+        db.add(img_msg)
+        image_messages.append(img_msg)
 
-    if image_messages:
-        await db.commit()
-        for image_message in image_messages:
-            await db.refresh(image_message)
-        from utils.websocket.websocket_events import emit_chat_message
-    await emit_chat_message(
-        new_conversation.id,
-        {
-            "id": image_message.id,
-            "conversation_id": image_message.conversation_id,
-            "sender_id": image_message.sender_id,
-            "content": image_message.content,
-            "message_type": image_message.message_type,
-            "image_data": image_message.image_data,
-            "sent_at": image_message.sent_at.isoformat(),
-        },
-        db,
-    )
+    messages_to_emit.extend(image_messages)
+
+    # Single flush to get conversation.id, then patch message FKs
+    await db.flush()
+    for msg in messages_to_emit:
+        msg.conversation_id = new_conversation.id
+
+    await db.commit()
+
+    from utils.websocket.websocket_events import emit_chat_message
+
+    for msg in messages_to_emit:
+        await db.refresh(msg)
+        await emit_chat_message(
+            new_conversation.id,
+            {
+                "id": msg.id,
+                "conversation_id": msg.conversation_id,
+                "sender_id": msg.sender_id,
+                "content": msg.content,
+                "message_type": msg.message_type,
+                "media_url": msg.media_url if msg.message_type == "image" else None,
+                "sent_at": msg.sent_at.isoformat(),
+            },
+            db,
+        )
 
     await emit_order_status_change(new_order.id, new_order.status.value)
 
@@ -626,8 +622,8 @@ async def get_courier_stats(
     )
     active_orders_count = result.scalar()
 
-    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
-    today_end = datetime.combine(datetime.now(timezone.utc).date(), time.max)
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
+    today_end = datetime.combine(datetime.now(timezone.utc).date(), time.max, tzinfo=timezone.utc)
 
     result = await db.execute(
         select(func.sum(Invoice.service_fee))
@@ -775,19 +771,23 @@ async def update_order_status(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    valid_statuses = [
-        "received by courier",
-        "in_progress",
-        "ready_for_delivery",
-        "out_for_delivery",
-    ]
-    if status not in valid_statuses:
+    allowed_statuses = {
+        OrderStatus.RECEIVED_BY_COURIER,
+        OrderStatus.IN_PROGRESS_TO_DO,
+        OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.AWAITING_CONFIRMATION,
+    }
+    try:
+        new_status = OrderStatus(status)
+    except ValueError:
+        new_status = None
+    if new_status not in allowed_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status. Valid statuses: {', '.join(valid_statuses)}",
+            detail=f"Invalid status. Valid statuses: {', '.join(s.value for s in allowed_statuses)}",
         )
 
-    order.status = status
+    order.status = new_status
     order.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(order)

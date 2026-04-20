@@ -95,7 +95,7 @@ async def upload_image(
     )
 
     # Generate public URL using custom domain
-    image_url = f"https://storage-giftly-storage.cranl.net/{s3_key}"
+    image_url = f"{settings.storage_base_url}/{s3_key}"
 
     return {"url": image_url, "filename": unique_filename}
 
@@ -170,6 +170,6 @@ async def upload_media(
     )
 
     # Generate public URL using custom domain
-    media_url = f"https://storage-giftly-storage.cranl.net/{s3_key}"
+    media_url = f"{settings.storage_base_url}/{s3_key}"
 
     return {"url": media_url, "filename": unique_filename}

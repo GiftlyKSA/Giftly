@@ -1,9 +1,9 @@
 import os
+import secrets
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
-from threading import Timer
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, status
 from fastapi.responses import FileResponse
@@ -15,7 +15,8 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Invoice, InvoiceStatus, Order
+from models import Invoice, InvoiceStatus, Order, OrderStatus, Promocode, PromocodeUsage
+from models.enums import UserRole
 from schemas import CreateInvoice, InvoiceResponse
 from utils.auth.auth import get_current_user
 from utils.database.database import get_db
@@ -25,33 +26,24 @@ router = APIRouter()
 
 @router.post("/", response_model=InvoiceResponse)
 async def create_invoice(
-    invoice_data: CreateInvoice, db: AsyncSession = Depends(get_db)
+    invoice_data: CreateInvoice,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Create a new invoice for an order. Admin only endpoint.
-    """
-    # Check if order exists
+    """Create a new invoice for an order. Authenticated endpoint."""
     result = await db.execute(select(Order).where(Order.id == invoice_data.order_id))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=400, detail="Order not found")
 
-    # Check if invoice already exists for this order
     result = await db.execute(
         select(Invoice).where(Invoice.order_id == invoice_data.order_id)
     )
-    existing_invoice = result.scalar_one_or_none()
-    if existing_invoice:
-        raise HTTPException(
-            status_code=400, detail="Invoice already exists for this order"
-        )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Invoice already exists for this order")
 
-    # Generate unique invoice ID
-    result = await db.execute(select(Invoice))
-    invoice_count = len(result.scalars().all())
-    invoice_id = f"INV-{invoice_count + 1:06d}"
+    invoice_id = f"INV-{secrets.token_hex(6).upper()}"
 
-    # Create the invoice
     new_invoice = Invoice(
         invoice_id=invoice_id,
         order_id=invoice_data.order_id,
@@ -68,41 +60,17 @@ async def create_invoice(
     )
 
     db.add(new_invoice)
+    order.status = OrderStatus.INVOICE_CREATED
     await db.commit()
     await db.refresh(new_invoice)
 
-    # Update order status to indicate invoice is created
-    order.status = (
-        "invoice_created"  # You might want to add this status to your OrderStatus enum
+    from utils.websocket.websocket_events import (
+        emit_invoice_requires_approval,
+        emit_order_status_change,
     )
-    await db.commit()
 
-    # Emit order status change event
-    from utils.websocket.websocket_events import emit_order_status_change
-
-    await emit_order_status_change(order.id, order.status)
-
-    # Emit invoice creation event
-    from utils.websocket.websocket_events import emit_invoice_created
-
-    await emit_invoice_created(new_invoice.id, new_invoice.order_id)
-
-    # Send chat message about invoice creation
-    from utils.websocket.websocket_events import emit_chat_message
-
-    await emit_chat_message(
-        conversation_id=None,  # Will be found by order
-        sender_id=current_user.id,
-        content=f"تم إنشاء فاتورة جديدة بمبلغ {new_invoice.full_amount:.2f} ريال",
-        message_type="invoice_created",
-        order_id=new_invoice.order_id,
-        invoice_data={
-            "id": new_invoice.id,
-            "invoice_id": new_invoice.invoice_id,
-            "full_amount": new_invoice.full_amount,
-            "description": new_invoice.description,
-        },
-    )
+    await emit_order_status_change(order.id, OrderStatus.INVOICE_CREATED.value)
+    await emit_invoice_requires_approval(new_invoice.id, order.id)
 
     return new_invoice
 
@@ -117,10 +85,9 @@ async def create_invoice_by_courier(
     """
     Create a new invoice for an order by courier. Only assigned courier can create invoice.
     """
-    if current_user.role != "Courier":
+    if current_user.role != UserRole.COURIER:
         raise HTTPException(status_code=403, detail="Only couriers can create invoices")
 
-    # Check if order exists and is assigned to this courier
     result = await db.execute(select(Order).where(Order.id == invoice_data.order_id))
     order = result.scalar_one_or_none()
     if not order:
@@ -129,20 +96,13 @@ async def create_invoice_by_courier(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    # Check if invoice already exists for this order
     result = await db.execute(
         select(Invoice).where(Invoice.order_id == invoice_data.order_id)
     )
-    existing_invoice = result.scalar_one_or_none()
-    if existing_invoice:
-        raise HTTPException(
-            status_code=400, detail="Invoice already exists for this order"
-        )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Invoice already exists for this order")
 
-    # Generate unique invoice ID
-    result = await db.execute(select(Invoice))
-    invoice_count = len(result.scalars().all())
-    invoice_id = f"INV-{invoice_count + 1:06d}"
+    invoice_id = f"INV-{secrets.token_hex(6).upper()}"
 
     # Store amounts as floats directly (no multiplication by 1000)
     new_invoice = Invoice(
@@ -165,10 +125,9 @@ async def create_invoice_by_courier(
     await db.commit()
     await db.refresh(new_invoice)
 
-    # Emit invoice creation event
-    from utils.websocket.websocket_events import emit_invoice_created
+    from utils.websocket.websocket_events import emit_invoice_requires_approval
 
-    await emit_invoice_created(new_invoice.id, new_invoice.order_id)
+    await emit_invoice_requires_approval(new_invoice.id, order.id)
 
     return new_invoice
 
@@ -183,16 +142,17 @@ async def update_invoice_by_courier(
     """
     Update an existing invoice by courier. Only the assigned courier can update the invoice.
     """
-    if current_user.role != "Courier":
+    if current_user.role != UserRole.COURIER:
         raise HTTPException(status_code=403, detail="Only couriers can update invoices")
 
-    # Check if invoice exists
     result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    # Check if order exists and is assigned to this courier
+    if invoice.status in (InvoiceStatus.PAID, InvoiceStatus.CANCELLED):
+        raise HTTPException(status_code=400, detail="Cannot update a paid or cancelled invoice")
+
     result = await db.execute(select(Order).where(Order.id == invoice.order_id))
     order = result.scalar_one_or_none()
     if not order:
@@ -201,7 +161,6 @@ async def update_invoice_by_courier(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    # Store amounts as floats directly (no multiplication by 1000)
     invoice.full_amount = invoice_data.full_amount
     invoice.service_fee = invoice_data.service_fee
     invoice.order_only_price = invoice_data.order_only_price
@@ -211,36 +170,25 @@ async def update_invoice_by_courier(
     invoice.due_date = invoice_data.due_date
     invoice.tax_amount = invoice_data.tax_amount
     invoice.discount_amount = invoice_data.discount_amount
-    invoice.updated_at = datetime.utcnow()
+    invoice.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(invoice)
 
-    # Send chat message about invoice update
-    from utils.websocket.websocket_events import emit_chat_message
+    from utils.websocket.websocket_events import emit_invoice_requires_approval
 
-    await emit_chat_message(
-        conversation_id=None,  # Will be found by order
-        sender_id=current_user.id,
-        content=f"تم تحديث الفاتورة - المبلغ الجديد: {invoice.full_amount:.2f} ريال",
-        message_type="invoice_updated",
-        order_id=invoice.order_id,
-        invoice_data={
-            "id": invoice.id,
-            "invoice_id": invoice.invoice_id,
-            "full_amount": invoice.full_amount,
-            "description": invoice.description,
-        },
-    )
+    await emit_invoice_requires_approval(invoice.id, order.id)
 
     return invoice
 
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
-async def get_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Get invoice by invoice_id. Public endpoint for viewing invoices.
-    """
+async def get_invoice(
+    invoice_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get invoice by invoice_id. Requires authentication."""
     result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
     invoice = result.scalar_one_or_none()
     if not invoice:
@@ -276,20 +224,12 @@ async def get_invoice_by_id(
     return invoice
 
 
-def delete_file_after_delay(
-    file_path: str, delay_seconds: int = 600
-):  # 10 minutes = 600 seconds
-    """Delete a file after a specified delay"""
-
-    def delete_file():
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception as e:
-            print(f"Error deleting file {file_path}: {e}")
-
-    timer = Timer(delay_seconds, delete_file)
-    timer.start()
+def _delete_file(file_path: str) -> None:
+    """Remove a temporary file; ignores missing-file errors."""
+    try:
+        os.remove(file_path)
+    except OSError:
+        pass
 
 
 def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> BytesIO:
@@ -353,12 +293,12 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
     content.append(invoice_table)
     content.append(Spacer(1, 20))
 
-    # Items table
+    # Items table — amounts stored as halalas, display as SAR (÷100)
     items_data = [
         ["Item", "Qty", "Price"],
-        ["Order Value", "1", f"{invoice.order_only_price:.2f} SAR"],
-        ["Service Fee", "1", f"{invoice.service_fee:.2f} SAR"],
-        ["Tax (15%)", "1", f"{(invoice.order_only_price * 0.15):.2f} SAR"],
+        ["Order Value", "1", f"{invoice.order_only_price / 100:.2f} SAR"],
+        ["Service Fee", "1", f"{invoice.service_fee / 100:.2f} SAR"],
+        ["Tax", "1", f"{invoice.tax_amount / 100:.2f} SAR"],
     ]
 
     items_table = Table(items_data, colWidths=[3.5 * inch, 1 * inch, 2 * inch])
@@ -381,7 +321,7 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
 
     # Total
     total_data = [
-        ["Total Amount:", f"{invoice.full_amount:.2f} SAR"],
+        ["Total Amount:", f"{invoice.full_amount / 100:.2f} SAR"],
     ]
 
     total_table = Table(total_data, colWidths=[4 * inch, 2 * inch])
@@ -448,7 +388,7 @@ async def download_invoice_pdf(
         f.write(pdf_buffer.getvalue())
 
     # Schedule file deletion after 10 minutes
-    background_tasks.add_task(delete_file_after_delay, temp_filepath, 600)
+    background_tasks.add_task(_delete_file, temp_filepath)
 
     # Return file response
     return FileResponse(
@@ -498,7 +438,7 @@ async def download_invoice_pdf_by_id(
         f.write(pdf_buffer.getvalue())
 
     # Schedule file deletion after 10 minutes
-    background_tasks.add_task(delete_file_after_delay, temp_filepath, 600)
+    background_tasks.add_task(_delete_file, temp_filepath)
 
     # Return file response
     return FileResponse(
@@ -573,20 +513,28 @@ async def verify_coupon(
     if not coupon:
         raise HTTPException(status_code=400, detail="Invalid coupon code")
 
-    # Check if coupon is active and not expired
-    if not coupon.active or coupon.valid_until < datetime.utcnow():
+    if not coupon.active or coupon.valid_until.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Coupon is expired or inactive")
 
     # Check usage limit
     if coupon.usage_count >= coupon.usage_limit and coupon.usage_limit > 0:
         raise HTTPException(status_code=400, detail="Coupon usage limit exceeded")
 
-    # Check minimum order value
     if invoice.full_amount < coupon.minimum_order_value:
         raise HTTPException(
             status_code=400,
             detail=f"Minimum order value for this coupon is {coupon.minimum_order_value}",
         )
+
+    # Per-user one-use enforcement (same as pay_with_wallet)
+    usage_check = await db.execute(
+        select(PromocodeUsage).where(
+            PromocodeUsage.user_id == current_user.id,
+            PromocodeUsage.promocode_id == coupon.id,
+        )
+    )
+    if usage_check.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="You have already used this promocode")
 
     # Calculate discount
     discount_amount = 0

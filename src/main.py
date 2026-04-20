@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import bcrypt
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from utils.admin.admin import (
     AdminAdmin,
@@ -67,6 +68,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Logging + activity tracking
 app.add_middleware(LastActivityMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
@@ -84,6 +93,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             f"max-age={settings.hsts_max_age_seconds}; includeSubDomains"
         )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "object-src 'none'; frame-ancestors 'none';"
+        )
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         return response
 
 
@@ -278,7 +292,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
 
             if action == "join_room":
                 room = data.get("room")
-                if room:
+                # Only allow users to join their own personal room or chat rooms
+                # they are a participant of — prevents IDOR/eavesdropping
+                allowed = False
+                if room == f"user_{user.id}":
+                    allowed = True
+                elif room and room.startswith("chat_"):
+                    try:
+                        conv_id = int(room.split("_")[1])
+                        conv_check = await db.execute(
+                            select(Conversation).where(
+                                Conversation.id == conv_id,
+                            )
+                        )
+                        conv = conv_check.scalar_one_or_none()
+                        if conv and user.id in [conv.customer_id, conv.courier_id]:
+                            allowed = True
+                    except (ValueError, IndexError):
+                        pass
+                if allowed:
                     await manager.join_room(user.id, room)
                     await manager.send_to_user(
                         user.id, {"action": "joined_room", "room": room}
