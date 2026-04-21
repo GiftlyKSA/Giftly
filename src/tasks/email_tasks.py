@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 @broker.task
+async def send_sms_task(phone: str, otp: str) -> None:
+    """Send an OTP SMS via the configured SMS provider (non-blocking)."""
+    from utils.clients.sms import send_sms
+    await send_sms(phone, otp)
+
+
+@broker.task
 async def send_invoice_email_task(invoice_id: int) -> None:
     """Send the invoice email to the customer after an invoice is created."""
     async with AsyncSessionLocal() as db:

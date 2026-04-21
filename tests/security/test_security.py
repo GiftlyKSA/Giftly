@@ -127,7 +127,7 @@ async def test_promo_code_per_user_unique(
 # ---------------------------------------------------------------------------
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_sql_injection_in_phone_safe(mock_sms, client):
     """A SQL injection attempt in phone_number must not crash the server."""
     resp = await client.post(
@@ -138,7 +138,7 @@ async def test_sql_injection_in_phone_safe(mock_sms, client):
     assert resp.status_code in (200, 422)
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_xss_in_name_safe(mock_sms, client, db: AsyncSession):
     """XSS payload in name should be stored as plain text, not executed."""
     phone = "+966511111901"

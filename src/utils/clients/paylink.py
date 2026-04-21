@@ -1,175 +1,129 @@
-import json
-from typing import Any, Dict
+"""
+Paylink.sa API client.
+
+Auth: POST /api/auth with apiId + secretKey → id_token (Bearer).
+Token is valid for 30 h (persistToken=true) or 30 min (persistToken=false).
+The client caches the token and refreshes it on 401.
+"""
+
+import time
+from typing import Any, Dict, Optional
 
 import httpx
 
 
 class PaylinkClient:
-    """
-    Python client for Paylink.sa API to create orders and invoices.
-    """
-
     BASE_URL = "https://api.paylink.sa"
 
-    def __init__(self, api_key: str, test_mode: bool = False):
+    def __init__(
+        self,
+        api_key: str,
+        test_mode: bool = False,
+        api_id: str = "",
+    ):
         """
-        Initialize the Paylink client.
-
         Args:
-            api_key: Your Paylink API key
-            test_mode: If True, use test environment (default: False)
+            api_key:  secretKey (or legacy X-API-KEY if api_id is empty)
+            test_mode: passed to Paylink test environment flag
+            api_id:   apiId — when provided, uses Bearer-token auth
         """
-        self.api_key = api_key
-        self.test_mode = test_mode
-        self.client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
-            headers={
-                "X-API-KEY": self.api_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            timeout=30.0,
-        )
+        self._api_key = api_key
+        self._api_id = api_id
+        self._test_mode = test_mode
+        self._token: Optional[str] = None
+        self._token_expiry: float = 0.0
+        self._client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self):
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    async def __aenter__(self) -> "PaylinkClient":
+        self._client = httpx.AsyncClient(base_url=self.BASE_URL, timeout=30.0)
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.client.aclose()
+    async def __aexit__(self, *_) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
-    async def create_order(self, order_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create a new order.
+    # ------------------------------------------------------------------
+    # Auth
+    # ------------------------------------------------------------------
 
-        Args:
-            order_data: Order data dictionary containing:
-                - amount: float (required)
-                - currency: str (required, e.g., "SAR")
-                - description: str (required)
-                - customer: dict with name, email, phone (required)
-                - orderNumber: str (optional)
-                - callBackUrl: str (optional)
-                - returnUrl: str (optional)
+    async def _get_token(self) -> str:
+        """Return a valid Bearer token, refreshing if expired."""
+        if self._token and time.time() < self._token_expiry:
+            return self._token
+        resp = await self._client.post(
+            "/api/auth",
+            json={"apiId": self._api_id, "secretKey": self._api_key, "persistToken": True},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self._token = data["id_token"]
+        # persistToken=True → 30 h; subtract 5 min buffer
+        self._token_expiry = time.time() + 30 * 3600 - 300
+        return self._token
 
-        Returns:
-            Order response from Paylink API
-        """
-        endpoint = "/api/merchants/orders"
-        response = await self.client.post(endpoint, json=order_data)
-        response.raise_for_status()
-        return response.json()
+    async def _headers(self) -> Dict[str, str]:
+        if self._api_id:
+            token = await self._get_token()
+            return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        return {"X-API-KEY": self._api_key, "Content-Type": "application/json"}
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _post(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        headers = await self._headers()
+        resp = await self._client.post(endpoint, json=payload, headers=headers)
+        if resp.status_code == 401 and self._api_id:
+            # Token may have expired early — force refresh once
+            self._token = None
+            headers = await self._headers()
+            resp = await self._client.post(endpoint, json=payload, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _get(self, endpoint: str) -> Dict[str, Any]:
+        headers = await self._headers()
+        resp = await self._client.get(endpoint, headers=headers)
+        if resp.status_code == 401 and self._api_id:
+            self._token = None
+            headers = await self._headers()
+            resp = await self._client.get(endpoint, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    # API methods
+    # ------------------------------------------------------------------
 
     async def create_invoice(self, invoice_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Create a new invoice.
+        Create a Paylink payment invoice.
 
-        Args:
-            invoice_data: Invoice data dictionary containing:
-                - amount: float (required)
-                - currency: str (required, e.g., "SAR")
-                - description: str (required)
-                - customer: dict with name, email, phone (required)
-                - invoiceNumber: str (optional)
-                - callBackUrl: str (optional)
-                - returnUrl: str (optional)
-
-        Returns:
-            Invoice response from Paylink API
+        Required keys: amount (SAR float), currency, description,
+        customer (name/email/phone), invoiceNumber, callBackUrl, returnUrl.
         """
-        endpoint = "/api/merchants/invoices"
-        response = await self.client.post(endpoint, json=invoice_data)
-        response.raise_for_status()
-        return response.json()
+        return await self._post("/api/merchants/invoices", invoice_data)
+
+    async def create_order(self, order_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Paylink order (alternative to invoice)."""
+        return await self._post("/api/merchants/orders", order_data)
+
+    async def get_invoice(self, transaction_no: str) -> Dict[str, Any]:
+        """Fetch invoice/transaction status by Paylink transactionNo."""
+        return await self._get(f"/api/merchants/invoices/{transaction_no}")
 
     async def get_order(self, order_id: str) -> Dict[str, Any]:
-        """
-        Get order details by ID.
+        """Fetch order status by Paylink order ID."""
+        return await self._get(f"/api/merchants/orders/{order_id}")
 
-        Args:
-            order_id: Order ID
-
-        Returns:
-            Order details
-        """
-        endpoint = f"/api/merchants/orders/{order_id}"
-        response = await self.client.get(endpoint)
-        response.raise_for_status()
-        return response.json()
-
-    async def get_invoice(self, invoice_id: str) -> Dict[str, Any]:
-        """
-        Get invoice details by ID.
-
-        Args:
-            invoice_id: Invoice ID
-
-        Returns:
-            Invoice details
-        """
-        endpoint = f"/api/merchants/invoices/{invoice_id}"
-        response = await self.client.get(endpoint)
-        response.raise_for_status()
-        return response.json()
-
-
-# Example usage
-async def example_usage():
-    """
-    Example of how to use the Paylink client.
-    """
-    api_key = "your-api-key-here"  # Replace with actual API key
-
-    async with PaylinkClient(api_key) as client:
-        # Create an order
-        order_data = {
-            "amount": 100.00,
-            "currency": "SAR",
-            "description": "Test Order",
-            "customer": {
-                "name": "John Doe",
-                "email": "john@example.com",
-                "phone": "966501234567",
-            },
-            "orderNumber": "ORD-001",
-            "callBackUrl": "https://yourwebsite.com/callback",
-            "returnUrl": "https://yourwebsite.com/return",
-        }
-
-        try:
-            order_response = await client.create_order(order_data)
-            print("Order created:", json.dumps(order_response, indent=2))
-        except httpx.HTTPStatusError as e:
-            print(f"Error creating order: {e.response.status_code} - {e.response.text}")
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-
-        # Create an invoice
-        invoice_data = {
-            "amount": 50.00,
-            "currency": "SAR",
-            "description": "Test Invoice",
-            "customer": {
-                "name": "Jane Smith",
-                "email": "jane@example.com",
-                "phone": "966509876543",
-            },
-            "invoiceNumber": "INV-001",
-            "callBackUrl": "https://yourwebsite.com/callback",
-            "returnUrl": "https://yourwebsite.com/return",
-        }
-
-        try:
-            invoice_response = await client.create_invoice(invoice_data)
-            print("Invoice created:", json.dumps(invoice_response, indent=2))
-        except httpx.HTTPStatusError as e:
-            print(
-                f"Error creating invoice: {e.response.status_code} - {e.response.text}"
-            )
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(example_usage())
+    async def cancel_invoice(self, transaction_no: str) -> Dict[str, Any]:
+        """Cancel a pending Paylink invoice."""
+        return await self._post(
+            f"/api/merchants/invoices/{transaction_no}/cancel", {}
+        )

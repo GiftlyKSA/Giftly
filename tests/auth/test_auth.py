@@ -45,7 +45,7 @@ async def _verify_otp(client, phone: str, otp: str, device_id: str = "dev-1"):
 # ---------------------------------------------------------------------------
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_send_otp_new_user_creates_user(mock_sms, client, db: AsyncSession):
     phone = "+966511111101"
     resp = await _send_otp(client, phone)
@@ -59,7 +59,7 @@ async def test_send_otp_new_user_creates_user(mock_sms, client, db: AsyncSession
     assert user.otp is not None
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_send_otp_otp_not_in_response(mock_sms, client):
     """Security: OTP must never be returned in the HTTP response."""
     resp = await _send_otp(client, "+966511111102")
@@ -68,7 +68,7 @@ async def test_send_otp_otp_not_in_response(mock_sms, client):
     assert "OTP" not in str(body).replace("OTP sent", "")
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_send_otp_rate_limit(mock_sms, client):
     """Security: more than 3 OTP requests per phone within 10 min → 429."""
     phone = "+966511111103"
@@ -84,7 +84,7 @@ async def test_send_otp_rate_limit(mock_sms, client):
 # ---------------------------------------------------------------------------
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_verify_otp_invalid_otp(mock_sms, client, db: AsyncSession):
     phone = "+966511111201"
     await _send_otp(client, phone)
@@ -94,7 +94,7 @@ async def test_verify_otp_invalid_otp(mock_sms, client, db: AsyncSession):
     assert "Invalid OTP" in resp.json()["detail"]
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_verify_otp_expired(mock_sms, client, db: AsyncSession):
     phone = "+966511111202"
     await _send_otp(client, phone)
@@ -111,7 +111,7 @@ async def test_verify_otp_expired(mock_sms, client, db: AsyncSession):
     assert "expired" in resp.json()["detail"].lower()
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_verify_otp_new_user_returns_needs_profile(
     mock_sms, client, db: AsyncSession
 ):
@@ -131,7 +131,7 @@ async def test_verify_otp_new_user_returns_needs_profile(
     assert otp not in str(body)
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_verify_otp_existing_verified_customer(
     mock_sms, client, db: AsyncSession, customer: User
 ):
@@ -158,7 +158,7 @@ async def test_verify_otp_existing_verified_customer(
 # ---------------------------------------------------------------------------
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 @patch("tasks.email_tasks.send_welcome_email_task.kiq", new_callable=AsyncMock)
 async def test_complete_profile(mock_email, mock_sms, client, db: AsyncSession):
     phone = "+966511111301"
@@ -185,7 +185,7 @@ async def test_complete_profile(mock_email, mock_sms, client, db: AsyncSession):
     assert user.is_verified is True
 
 
-@patch("routers.auth.send_sms", new_callable=AsyncMock)
+@patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
 async def test_complete_profile_duplicate_email(mock_sms, client, customer: User):
     phone = "+966511111302"
     await _send_otp(client, phone)

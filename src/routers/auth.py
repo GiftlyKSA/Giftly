@@ -18,7 +18,6 @@ from utils.auth.auth import (
     get_user_by_phone,
     validate_refresh_token,
 )
-from utils.clients.sms import send_sms
 from utils.database.config import settings
 from utils.database.database import get_db
 
@@ -95,8 +94,9 @@ async def send_otp(
         await db.commit()
         await db.refresh(user)
 
-    # Deliver OTP via SMS — never expose it in the API response
-    await send_sms(phone_number, otp)
+    # Deliver OTP via SMS via background task queue — never expose it in the API response
+    from tasks.email_tasks import send_sms_task
+    await send_sms_task.kiq(phone_number, otp)
 
     return {"message": "OTP sent successfully"}
 

@@ -37,7 +37,12 @@ os.environ.setdefault(
 )
 os.environ.setdefault("paylink_return_url", "http://localhost/return")
 os.environ.setdefault("redis_url", "redis://localhost:6379")
+os.environ.setdefault("use_redis_broker", "false")
 os.environ.setdefault("debug", "true")
+os.environ.setdefault("email_provider", "smtp")
+os.environ.setdefault("email_from_address", "")
+os.environ.setdefault("email_api_key", "")
+os.environ.setdefault("paylink_api_id", "")
 
 from utils.auth.auth import create_tokens
 from utils.database.database import Base, get_db

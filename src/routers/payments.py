@@ -142,7 +142,9 @@ async def create_payment(
 
         try:
             async with PaylinkClient(
-                settings.paylink_api_key, settings.paylink_test_mode
+                settings.paylink_api_key,
+                settings.paylink_test_mode,
+                api_id=settings.paylink_api_id,
             ) as paylink:
                 resp = await paylink.create_invoice(
                     {
@@ -210,7 +212,8 @@ async def paylink_callback(
         .options(
             selectinload(Payment.invoice)
             .selectinload(Invoice.order)
-            .selectinload(Order.conversation)
+            .selectinload(Order.conversation),
+            selectinload(Payment.user),
         )
         .where(Payment.transaction_id == transaction_no)
     )
@@ -241,28 +244,21 @@ async def paylink_callback(
         await db.commit()
 
         # Invoice payment: mark invoice + order paid
+        # invoice and user are already loaded via selectinload on the initial query
+        # (expire_on_commit=False means they survive the commit above)
         if payment.invoice_id:
-            result2 = await db.execute(
-                select(Invoice)
-                .options(selectinload(Invoice.order).selectinload(Order.conversation))
-                .where(Invoice.id == payment.invoice_id)
-            )
-            invoice = result2.scalar_one_or_none()
-            if invoice:
-                result3 = await db.execute(
-                    select(User).where(User.id == payment.user_id)
-                )
-                payer = result3.scalar_one_or_none()
-                if payer:
-                    result4 = await db.execute(
-                        select(func.sum(Payment.amount)).where(
-                            Payment.invoice_id == invoice.id,
-                            Payment.status == PaymentStatus.COMPLETED,
-                        )
+            invoice = payment.invoice
+            payer = payment.user
+            if invoice and payer:
+                result4 = await db.execute(
+                    select(func.sum(Payment.amount)).where(
+                        Payment.invoice_id == invoice.id,
+                        Payment.status == PaymentStatus.COMPLETED,
                     )
-                    total_paid = result4.scalar() or 0
-                    if total_paid >= invoice.full_amount:
-                        await _mark_invoice_paid(invoice, total_paid, payer, db)
+                )
+                total_paid = result4.scalar() or 0
+                if total_paid >= invoice.full_amount:
+                    await _mark_invoice_paid(invoice, total_paid, payer, db)
 
         # Wallet top-up: credit atomically to prevent double-credit race condition
         else:

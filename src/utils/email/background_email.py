@@ -1,8 +1,9 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models import Invoice, Order, User
 
@@ -25,7 +26,7 @@ async def send_welcome_email_background(user_id: int, db: AsyncSession):
             return
 
         # Send welcome email
-        success = send_email_with_template(
+        success = await send_email_with_template(
             to_email=user.email,
             subject="مرحباً بك في هديتي",
             template_name="welcome_email",
@@ -49,11 +50,9 @@ async def send_invoice_email_background(invoice_id: int, db: AsyncSession):
     Background task to send invoice email to customer and mark as sent.
     """
     try:
-        # Get invoice with order and user details
         result = await db.execute(
             select(Invoice)
-            .join(Order, Invoice.order_id == Order.id)
-            .join(User, Order.created_by_user_id == User.id)
+            .options(selectinload(Invoice.order).selectinload(Order.created_by_user))
             .where(Invoice.id == invoice_id)
         )
         invoice = result.scalar_one_or_none()
@@ -100,7 +99,7 @@ async def send_invoice_email_background(invoice_id: int, db: AsyncSession):
         }
 
         # Send invoice email
-        success = send_email_with_template(
+        success = await send_email_with_template(
             to_email=customer.email,
             subject=f"فاتورة طلبك من هديتي - {invoice.invoice_id}",
             template_name="invoice_email",
@@ -112,7 +111,7 @@ async def send_invoice_email_background(invoice_id: int, db: AsyncSession):
             await db.execute(
                 update(Invoice)
                 .where(Invoice.id == invoice_id)
-                .values(sent_to_user_via_email=True, sent_at=datetime.utcnow())
+                .values(sent_to_user_via_email=True, sent_at=datetime.now(timezone.utc))
             )
             await db.commit()
             logger.info(f"Invoice email sent successfully for invoice {invoice_id}")
@@ -128,11 +127,9 @@ async def send_payment_confirmation_email_background(invoice_id: int, db: AsyncS
     Background task to send payment confirmation email to customer.
     """
     try:
-        # Get invoice with order and user details
         result = await db.execute(
             select(Invoice)
-            .join(Order, Invoice.order_id == Order.id)
-            .join(User, Order.created_by_user_id == User.id)
+            .options(selectinload(Invoice.order).selectinload(Order.created_by_user))
             .where(Invoice.id == invoice_id)
         )
         invoice = result.scalar_one_or_none()
@@ -171,7 +168,7 @@ async def send_payment_confirmation_email_background(invoice_id: int, db: AsyncS
             "notes": "تم دفع الفاتورة بنجاح. شكراً لاستخدام خدماتنا!",
         }
 
-        success = send_email_with_template(
+        success = await send_email_with_template(
             to_email=customer.email,
             subject=f"تأكيد دفع الفاتورة - {invoice.invoice_id}",
             template_name="invoice_email",

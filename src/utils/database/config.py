@@ -30,10 +30,19 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Paylink.sa payment gateway
-    paylink_api_key: str = ""
+    paylink_api_id: str = ""          # apiId for Bearer-token auth (recommended)
+    paylink_api_key: str = ""         # secretKey (or legacy X-API-KEY when api_id is empty)
     paylink_test_mode: bool = True
     paylink_callback_url: str = ""
     paylink_return_url: str = ""
+
+    # Email provider: smtp | sender_net | sendgrid | mailgun
+    email_provider: str = "smtp"
+    email_smtp_server: str = "smtp.gmail.com"
+    email_smtp_port: int = 587
+    email_from_address: str = ""
+    email_from_name: str = "Giftly"
+    email_api_key: str = ""   # API key for HTTP-based providers
 
     # Security headers
     hsts_max_age_seconds: int = 31536000
@@ -43,6 +52,9 @@ class Settings(BaseSettings):
 
     # CORS allowed origins — comma-separated list or JSON array in .env
     allowed_origins: list[str] = ["*"]
+
+    # Task broker — set to False to use in-memory broker when Redis is unavailable (dev/CI)
+    use_redis_broker: bool = True
 
     def model_post_init(self, __context) -> None:
         # Validate secret_key strength
