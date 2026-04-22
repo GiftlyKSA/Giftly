@@ -16,7 +16,7 @@ from models import (
     Wallet,
 )
 from models.enums import UserRole
-from schemas import RequestWalletDeposit, WalletResponse
+from schemas import InitiateWalletChargeRequest, RequestWalletDeposit, WalletResponse
 from utils.clients.paylink import PaylinkClient
 
 router = APIRouter()
@@ -35,7 +35,7 @@ async def get_my_wallet(
 
 @router.post("/initiate-charge")
 async def initiate_wallet_charge(
-    data: dict,
+    data: InitiateWalletChargeRequest,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -47,8 +47,8 @@ async def initiate_wallet_charge(
     if current_user.role != UserRole.CUSTOMER:
         raise HTTPException(status_code=403, detail="Only customers can charge their wallet")
 
-    amount_sar = data.get("amount_sar")
-    if not isinstance(amount_sar, (int, float)) or amount_sar < settings.wallet_charge_min_sar:
+    amount_sar = data.amount_sar
+    if amount_sar < settings.wallet_charge_min_sar:
         raise HTTPException(status_code=400, detail=f"Minimum charge amount is {settings.wallet_charge_min_sar} SAR")
     if amount_sar > settings.wallet_charge_max_sar:
         raise HTTPException(status_code=400, detail=f"Maximum charge amount is {settings.wallet_charge_max_sar} SAR")

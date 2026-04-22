@@ -1,3 +1,5 @@
+import html
+
 from utils.auth.auth import get_current_user
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,7 +25,7 @@ async def create_important_event(
     """Create a new important event for the current customer"""
     event = ImportantEvent(
         user_id=current_user.id,
-        title=event_data.title,
+        title=html.escape(event_data.title),
         event_date=event_data.event_date,
         recurring=event_data.recurring,
     )
@@ -98,7 +100,7 @@ async def update_important_event(
 
     # Update fields if provided
     if event_data.title is not None:
-        event.title = event_data.title
+        event.title = html.escape(event_data.title)
     if event_data.event_date is not None:
         event.event_date = event_data.event_date
     if event_data.recurring is not None:

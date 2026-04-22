@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import secrets
 import traceback
@@ -71,8 +72,10 @@ async def create_order(
     if not city:
         raise HTTPException(status_code=400, detail="Invalid city ID")
 
-    if description is not None and len(description.strip()) == 0:
-        description = None
+    if description is not None:
+        description = description.strip() or None
+    if description is not None:
+        description = html.escape(description)
 
     images = [image1, image2, image3]
     uploaded_images = []
@@ -322,7 +325,7 @@ async def cancel_order(
         )
 
     order.status = OrderStatus.CANCELLED
-    order.comments = cancel_data.reason
+    order.comments = html.escape(cancel_data.reason)
 
     # Invalidate any pending payments so a completed webhook cannot reactivate the order
     if order.invoice:
@@ -795,20 +798,25 @@ async def update_order_status(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    allowed_statuses = {
-        OrderStatus.RECEIVED_BY_COURIER,
-        OrderStatus.IN_PROGRESS_TO_DO,
-        OrderStatus.OUT_FOR_DELIVERY,
-        OrderStatus.AWAITING_CONFIRMATION,
+    _COURIER_TRANSITIONS: dict[OrderStatus, OrderStatus | None] = {
+        OrderStatus.RECEIVED_BY_COURIER: OrderStatus.IN_PROGRESS_TO_DO,
+        OrderStatus.IN_PROGRESS_TO_DO: OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.OUT_FOR_DELIVERY: OrderStatus.AWAITING_CONFIRMATION,
+        OrderStatus.AWAITING_CONFIRMATION: None,
     }
+
     try:
         new_status = OrderStatus(status)
     except ValueError:
         new_status = None
-    if new_status not in allowed_statuses:
+
+    next_allowed = _COURIER_TRANSITIONS.get(order.status)
+    if new_status is None or new_status != next_allowed:
+        valid_next = next_allowed.value if next_allowed else "none (use /complete)"
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status. Valid statuses: {', '.join(s.value for s in allowed_statuses)}",
+            detail=f"Cannot transition from '{order.status.value}' to '{status}'. "
+                   f"Next allowed: '{valid_next}'",
         )
 
     order.status = new_status

@@ -17,138 +17,59 @@
 
 ---
 
-## CRITICAL
-
-### No webhook signature verification on `POST /payments/paylink-callback`
-**File:** `src/routers/payments.py`
-
-The callback endpoint accepts any POST payload and trusts the `orderStatus` field directly. An unauthenticated attacker can craft a fake "paid" webhook to mark any payment as completed, credit wallets, and mark invoices as paid without an actual fund transfer.
-
-**Fix:** Re-validate transaction status directly with the Paylink API before updating state:
-```python
-async with PaylinkClient(settings.paylink_api_key) as paylink:
-    live = await paylink.get_invoice(transaction_no)
-    if live.get("orderStatus") != "paid":
-        return {"message": "Status mismatch — ignoring"}
-```
-
----
-
 ## HIGH
 
-### In-memory OTP rate limit bypassed in multi-worker deployments
-**File:** `src/routers/auth.py`
+### In-memory rate limits bypassed in multi-worker deployments
+**Files:** `src/routers/auth.py`, `src/utils/rate_limit.py`
 
-`_phone_timestamps` and `_verify_timestamps` are per-process dicts. With N uvicorn workers or replicas, the effective rate limit is N × 3 requests.
+`_phone_timestamps`, `_verify_timestamps`, and all `make_ip_rate_limiter` closures are per-process dicts. With N uvicorn workers or K8s replicas the effective rate limit multiplies by N. OTP brute-force and endpoint scraping are under-throttled.
 
 **Fix:** Replace with Redis atomic counters (`INCR` + `EXPIRE`). The Redis URL is already in settings.
 
 ---
 
-### Admin Basic Auth credentials travel in Base64 — mitigated
-`ForceHTTPSMiddleware` and HSTS headers mitigate this in production. Ensure HTTPS is enforced at the infrastructure level; no plaintext HTTP allowed.
+### Admin Basic Auth — mitigated, not eliminated
+Basic-auth credentials travel Base64-encoded in every request header. `ForceHTTPSMiddleware` and HSTS mitigate this in production. **Risk remains** if HTTP is reachable at the infrastructure level (e.g., internal load-balancer → app in plain HTTP).
 
----
-
-### Non-constant-time OTP comparison
-**File:** `src/routers/auth.py`
-
-```python
-if user.otp != otp_data.otp:
-```
-
-Python `!=` on strings is not constant-time. Statistical timing analysis can leak OTP digits.
-
-**Fix:**
-```python
-import secrets
-if not secrets.compare_digest(user.otp or "", otp_data.otp or ""):
-    raise HTTPException(status_code=400, detail="Invalid OTP")
-```
+**Fix:** Enforce TLS termination at the infrastructure level; reject plain-HTTP at the load balancer, not just at the app.
 
 ---
 
 ## MEDIUM
 
-### CORS defaults to wildcard with credentials
-**File:** `src/utils/database/config.py`, `src/main.py`
+### No audit log model for sensitive admin actions
+**Files:** `src/routers/admin.py`, `src/routers/orders.py`, `src/routers/invoices.py`
 
-`allowed_origins: list[str] = ["*"]` combined with `allow_credentials=True` allows any website to make authenticated cross-origin requests on behalf of users.
+Actions like courier approval/rejection, admin wallet credits, and order cancellation are logged via `logging.info/warning` (ephemeral), but there is no `AuditLog` database table for immutable, queryable records. Forensic investigations require parsing log files.
 
-**Fix:** Set explicit origins in production `.env`:
-```
-ALLOWED_ORIGINS=["https://app.giftly.com","https://admin.giftly.com"]
-```
+**Fix:** Create an `AuditLog` model with `actor_id`, `action`, `target_type`, `target_id`, `detail`, `created_at`. Write entries for: courier approval, admin wallet credits, invoice creation, order cancellation.
 
 ---
 
-### No audit log for sensitive admin actions
-Actions like courier approval/rejection, admin wallet credits, and invoice modifications leave no immutable audit trail.
+### No dependency vulnerability scanning
+No `pip audit`, `safety`, or Dependabot configuration in the repository.
 
-**Fix:** Create an `AuditLog` model and write entries for: courier approval, admin wallet credits, invoice creation/modification, order cancellation.
-
----
-
-### Paylink webhook not logged with source IP
-**File:** `src/routers/payments.py`
-
-Successful and failed webhook deliveries are not logged with payload hash, making post-fraud forensics incomplete. *(Source IP logging is done; payload hash is missing.)*
-
-**Fix:**
-```python
-import hashlib, json
-payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-logging.info("paylink_callback payload_hash=%s", payload_hash)
-```
+**Fix:** Add `uv run pip-audit` step to `.github/workflows/ci.yml` and/or enable GitHub Dependabot alerts for the repo.
 
 ---
 
 ## LOW
 
 ### `is_verified` JWT claim can become stale
-If an admin revokes a user's verified status, their existing access token continues to claim `is_verified=True` until expiry. Acceptable for short-lived tokens; document as known risk.
+**File:** `src/utils/auth/auth.py`
+
+If an admin revokes a user's verified status, their existing access token continues to claim `is_verified=True` until token expiry (default 30 min). Acceptable for short-lived tokens; documented as known risk.
+
+**Mitigation:** Keep `ACCESS_TOKEN_EXPIRE_MINUTES` short (≤ 30). For immediate revocation, move to a token blocklist backed by Redis.
 
 ---
 
-### CSP includes `'unsafe-inline'`
-**File:** `src/main.py`
+### Duplicate invoice creation endpoints
+**Files:** `src/routers/invoices.py`
 
-`'unsafe-inline'` in `script-src` allows arbitrary inline `<script>` blocks, negating most XSS protection.
+`POST /invoices/` and `POST /invoices/courier/create` are now functionally identical after auth was added to the generic route. Duplicate endpoints enlarge the attack surface and cause maintenance confusion.
 
-**Fix:** Remove `'unsafe-inline'`. Use nonces for any legitimate inline scripts.
-
----
-
-### No automated dependency scanning
-No `pip audit`, `safety`, or Dependabot configuration in the repo.
-
-**Fix:** Add `uv run pip-audit` to CI (`.github/workflows/ci.yml`) and/or enable GitHub Dependabot alerts.
-
----
-
-### SQLAlchemy `declarative_base()` deprecated
-**File:** `src/utils/database/database.py`
-
-`from sqlalchemy.ext.declarative import declarative_base` is deprecated since SQLAlchemy 2.0.
-
-**Fix:**
-```python
-from sqlalchemy.orm import declarative_base
-```
-
----
-
-### No alerting on repeated failed OTP attempts
-Failed OTP verifications are not logged at WARNING level. A brute-force attempt is invisible.
-
-**Fix:** `logging.warning("OTP verification failed for %s", normalized_phone)` with monitoring integration.
-
----
-
-### No rate limit on public enumeration endpoints
-`GET /cities/`, `GET /couriers/available/{city_id}`, `GET /promocodes/active/list` have no rate limiting.
-
-**Fix:** Add per-IP rate limiting via `slowapi` or Redis counters.
+**Fix:** Remove one route (suggest keeping `/courier/create` for clarity).
 
 ---
 
@@ -156,15 +77,9 @@ Failed OTP verifications are not logged at WARNING level. A brute-force attempt 
 
 | Priority | Severity | Finding | File |
 |---|---|---|---|
-| 1 | **CRITICAL** | No Paylink webhook signature verification | `payments.py` |
-| 2 | **HIGH** | Non-constant-time OTP comparison | `auth.py` |
-| 3 | **HIGH** | In-memory OTP rate limit (multi-worker) | `auth.py` |
-| 4 | **MEDIUM** | CORS wildcard with credentials | `main.py`, `config.py` |
-| 5 | **MEDIUM** | No audit log for sensitive admin actions | all routers |
-| 6 | **MEDIUM** | Webhook payload hash not logged | `payments.py` |
-| 7 | **LOW** | CSP `'unsafe-inline'` | `main.py` |
-| 8 | **LOW** | No dependency scanning | CI config |
-| 9 | **LOW** | `declarative_base()` deprecated | `database.py` |
-| 10 | **LOW** | No alerting on failed OTP | `auth.py` |
-| 11 | **LOW** | No rate limit on enumeration endpoints | `cities.py`, `couriers.py` |
-| 12 | **LOW** | `is_verified` JWT claim can be stale | `auth.py` |
+| 1 | **HIGH** | In-memory rate limits bypassed multi-worker | `auth.py`, `rate_limit.py` |
+| 2 | **HIGH** | Admin Basic Auth plain-HTTP risk | infra / `main.py` |
+| 3 | **MEDIUM** | No audit log model for admin actions | `admin.py`, routers |
+| 4 | **MEDIUM** | No dependency vulnerability scanning | CI config |
+| 5 | **LOW** | `is_verified` JWT claim stale | `auth.py` |
+| 6 | **LOW** | Duplicate invoice creation endpoints | `invoices.py` |

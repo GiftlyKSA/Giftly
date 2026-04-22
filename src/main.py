@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import html
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -71,12 +72,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+if "*" in settings.allowed_origins and not settings.debug:
+    raise RuntimeError(
+        "CORS wildcard origin ('*') is not allowed in production. "
+        "Set ALLOWED_ORIGINS to explicit frontend URLs."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # Logging + activity tracking
@@ -97,7 +104,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "default-src 'self'; script-src 'self'; "
             "object-src 'none'; frame-ancestors 'none';"
         )
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
@@ -307,7 +314,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 await manager.join_room(user.id, f"couriers_city_{profile.city_id}")
 
         while True:
-            data = await websocket.receive_json()
+            raw = await websocket.receive_text()
+            if len(raw) > settings.ws_max_payload_bytes:
+                await websocket.send_json({"error": "Payload too large"})
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"error": "Invalid JSON"})
+                continue
             action = data.get("action")
 
             if action == "join_room":

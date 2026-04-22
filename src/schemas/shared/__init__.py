@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -258,6 +258,10 @@ class ChargeWalletRequest(BaseModel):
         return v
 
 
+class InitiateWalletChargeRequest(BaseModel):
+    amount_sar: float = Field(..., gt=0)
+
+
 class RequestWalletDeposit(BaseModel):
     amount: float
 
@@ -372,7 +376,9 @@ class CreateImportantEventRequest(BaseModel):
     @field_validator("event_date")
     @classmethod
     def validate_event_date(cls, v):
-        if v < datetime.utcnow():
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        if v < datetime.now(timezone.utc):
             raise ValueError("Event date cannot be in the past")
         return v
 
@@ -408,6 +414,9 @@ class UpdateImportantEventRequest(BaseModel):
     @field_validator("event_date")
     @classmethod
     def validate_event_date(cls, v):
-        if v is not None and v < datetime.utcnow():
-            raise ValueError("Event date cannot be in the past")
+        if v is not None:
+            if v.tzinfo is None:
+                v = v.replace(tzinfo=timezone.utc)
+            if v < datetime.now(timezone.utc):
+                raise ValueError("Event date cannot be in the past")
         return v

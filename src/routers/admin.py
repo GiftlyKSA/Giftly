@@ -1,5 +1,7 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
+from pydantic import BaseModel, Field
 from utils.auth.auth import verify_password
 from utils.database.config import settings
 from utils.database.database import get_db
@@ -23,6 +25,10 @@ from models import (
 
 router = APIRouter()
 security = HTTPBasic()
+
+
+class AdminChargeWalletRequest(BaseModel):
+    amount: int = Field(..., gt=0, description="Amount in halalas to add to wallet")
 
 
 # ---------------------------------------------------------------------------
@@ -115,16 +121,12 @@ async def reject_courier(
 @router.post("/wallets/{user_id}/charge")
 async def admin_charge_wallet(
     user_id: int,
-    data: dict,
+    data: AdminChargeWalletRequest,
     current_admin: Admin = Depends(authenticate_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Add funds to any user's wallet. Admin-only."""
-    amount = data.get("amount")
-    if not isinstance(amount, int) or amount <= 0:
-        raise HTTPException(
-            status_code=400, detail="amount must be a positive integer (halaym)"
-        )
+    amount = data.amount
     if amount > settings.admin_wallet_charge_max_halalas:
         raise HTTPException(status_code=400, detail=f"Amount exceeds maximum allowed ({settings.admin_wallet_charge_max_halalas:,} halalas)")
 
@@ -133,10 +135,16 @@ async def admin_charge_wallet(
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
 
+    balance_before = wallet.balance
     wallet.balance += amount
     wallet.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(wallet)
+
+    logging.info(
+        "Admin wallet charge: admin=%s user=%s amount=%d balance_before=%d balance_after=%d",
+        current_admin.id, user_id, amount, balance_before, wallet.balance,
+    )
 
     return {
         "message": f"Charged {amount} halaym to user {user_id}",

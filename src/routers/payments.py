@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import time
 from collections import defaultdict
@@ -225,9 +227,12 @@ async def paylink_callback(
         payload.get("orderStatus") or payload.get("status") or ""
     ).lower()
 
+    payload_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
     logging.info(
-        "paylink_callback received from %s — transaction=%s status=%s",
-        client_ip, transaction_no, paylink_status,
+        "paylink_callback from=%s transaction=%s status=%s hash=%s",
+        client_ip, transaction_no, paylink_status, payload_hash,
     )
 
     if not transaction_no:
@@ -261,6 +266,26 @@ async def paylink_callback(
 
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
+
+    # Re-validate status with Paylink API to prevent spoofed webhooks
+    if settings.paylink_api_key and not settings.paylink_test_mode:
+        try:
+            from utils.clients.paylink import PaylinkClient
+            async with PaylinkClient(
+                settings.paylink_api_key,
+                test_mode=settings.paylink_test_mode,
+                api_id=settings.paylink_api_id,
+            ) as paylink:
+                live = await paylink.get_invoice(transaction_no)
+                live_status = str(live.get("orderStatus") or live.get("status") or "").lower()
+                if live_status != paylink_status:
+                    logging.warning(
+                        "paylink_callback status mismatch: webhook=%s live=%s transaction=%s",
+                        paylink_status, live_status, transaction_no,
+                    )
+                    paylink_status = live_status
+        except Exception as e:
+            logging.error("Paylink re-validation failed for %s: %s", transaction_no, str(e))
 
     if paylink_status in ("paid", "completed", "success"):
         # Atomic update prevents double-credit when Paylink retries the webhook concurrently

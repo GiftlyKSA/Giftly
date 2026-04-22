@@ -1,5 +1,6 @@
 from utils.auth.auth import get_current_user
 from utils.database.database import get_db
+from utils.rate_limit import make_ip_rate_limiter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from models import CourierProfile, User
 from models.enums import UserRole
 
 router = APIRouter()
+
+_rate_limit = make_ip_rate_limiter(max_requests=30, window_seconds=60)
 
 
 @router.put("/availability")
@@ -42,6 +45,7 @@ async def get_available_couriers(
     city_id: int,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    _: None = Depends(_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """List approved and available couriers in a city."""

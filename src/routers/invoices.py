@@ -28,11 +28,17 @@ async def create_invoice(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new invoice for an order. Authenticated endpoint."""
+    """Create a new invoice for an order. Assigned courier only."""
+    if current_user.role != UserRole.COURIER:
+        raise HTTPException(status_code=403, detail="Only couriers can create invoices")
+
     result = await db.execute(select(Order).where(Order.id == invoice_data.order_id))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=400, detail="Order not found")
+
+    if order.assigned_to_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
     result = await db.execute(
         select(Invoice).where(Invoice.order_id == invoice_data.order_id)
@@ -55,6 +61,7 @@ async def create_invoice(
         tax_amount=invoice_data.tax_amount,
         discount_amount=invoice_data.discount_amount,
         status=InvoiceStatus.NEW,
+        created_by_user_id=current_user.id,
     )
 
     db.add(new_invoice)
@@ -360,7 +367,11 @@ async def download_invoice_pdf(
     """Generate and stream PDF invoice for an order."""
     result = await db.execute(
         select(Order).where(
-            Order.id == order_id, Order.created_by_user_id == current_user.id
+            Order.id == order_id,
+            or_(
+                Order.created_by_user_id == current_user.id,
+                Order.assigned_to_user_id == current_user.id,
+            ),
         )
     )
     order = result.scalar_one_or_none()
@@ -394,7 +405,11 @@ async def download_invoice_pdf_by_id(
 
     result = await db.execute(
         select(Order).where(
-            Order.id == invoice.order_id, Order.created_by_user_id == current_user.id
+            Order.id == invoice.order_id,
+            or_(
+                Order.created_by_user_id == current_user.id,
+                Order.assigned_to_user_id == current_user.id,
+            ),
         )
     )
     order = result.scalar_one_or_none()
@@ -418,10 +433,13 @@ async def get_invoice_by_order(
     """
     Get invoice by order ID. Authenticated users can view their own invoices.
     """
-    # Check if order exists and belongs to current user
     result = await db.execute(
         select(Order).where(
-            Order.id == order_id, Order.created_by_user_id == current_user.id
+            Order.id == order_id,
+            or_(
+                Order.created_by_user_id == current_user.id,
+                Order.assigned_to_user_id == current_user.id,
+            ),
         )
     )
     order = result.scalar_one_or_none()

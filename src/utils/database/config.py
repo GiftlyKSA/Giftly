@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Admin wallet charge limit (halalas; 1 SAR = 100 halalas)
     admin_wallet_charge_max_halalas: int = 1_000_000
 
+    # WebSocket max raw payload size (bytes)
+    ws_max_payload_bytes: int = 65_536  # 64 KB
+
     # Security headers
     hsts_max_age_seconds: int = 31536000
 

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from utils.database.database import get_db
+from utils.rate_limit import make_ip_rate_limiter
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +12,14 @@ from schemas import ApplyPromocodeRequest
 
 router = APIRouter()
 
+_rate_limit = make_ip_rate_limiter(max_requests=30, window_seconds=60)
+
 
 @router.post("/apply", response_model=dict)
 async def apply_promocode(
-    request: ApplyPromocodeRequest, db: AsyncSession = Depends(get_db)
+    request: ApplyPromocodeRequest,
+    _: None = Depends(_rate_limit),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Calculate discount for a promocode. Public endpoint for customers and couriers.
@@ -64,6 +69,7 @@ async def apply_promocode(
 async def get_active_promocodes(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    _: None = Depends(_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """

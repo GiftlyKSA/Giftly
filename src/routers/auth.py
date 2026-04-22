@@ -1,5 +1,6 @@
 import logging
 import re
+import secrets
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -131,7 +132,8 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
                 status_code=400, detail="OTP has expired. Please request a new one."
             )
 
-    if user.otp != otp_data.otp:
+    if not secrets.compare_digest(user.otp or "", otp_data.otp or ""):
+        logging.warning("OTP verification failed for %s", normalized_phone)
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     user.otp = None  # Consume OTP

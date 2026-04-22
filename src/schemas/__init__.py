@@ -28,6 +28,7 @@ __all__ = [
     "CreateWallet",
     "UpdateWalletBalance",
     "ChargeWalletRequest",
+    "InitiateWalletChargeRequest",
     "RequestWalletDeposit",
     "PaymentMethodEnum",
     "PaymentStatusEnum",
