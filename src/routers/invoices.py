@@ -1,18 +1,15 @@
-import os
 import secrets
-import tempfile
-import time
 from datetime import datetime, timezone
 from io import BytesIO
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi.responses import StreamingResponse
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Invoice, InvoiceStatus, Order, OrderStatus, Promocode, PromocodeUsage
@@ -78,7 +75,6 @@ async def create_invoice(
 @router.post("/courier/create", response_model=InvoiceResponse)
 async def create_invoice_by_courier(
     invoice_data: CreateInvoice,
-    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -188,8 +184,18 @@ async def get_invoice(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get invoice by invoice_id. Requires authentication."""
-    result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
+    """Get invoice by invoice_id. Only the customer who placed the order or the assigned courier can view it."""
+    result = await db.execute(
+        select(Invoice)
+        .join(Order, Invoice.order_id == Order.id)
+        .where(
+            Invoice.invoice_id == invoice_id,
+            or_(
+                Order.created_by_user_id == current_user.id,
+                Order.assigned_to_user_id == current_user.id,
+            ),
+        )
+    )
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -222,14 +228,6 @@ async def get_invoice_by_id(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return invoice
-
-
-def _delete_file(file_path: str) -> None:
-    """Remove a temporary file; ignores missing-file errors."""
-    try:
-        os.remove(file_path)
-    except OSError:
-        pass
 
 
 def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> BytesIO:
@@ -352,15 +350,10 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
 @router.get("/order/{order_id}/pdf")
 async def download_invoice_pdf(
     order_id: int,
-    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Generate and download PDF invoice for an order.
-    Creates a temporary file that auto-deletes after 10 minutes.
-    """
-    # Check if order exists and belongs to current user
+    """Generate and stream PDF invoice for an order."""
     result = await db.execute(
         select(Order).where(
             Order.id == order_id, Order.created_by_user_id == current_user.id
@@ -375,47 +368,26 @@ async def download_invoice_pdf(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for this order")
 
-    # Generate PDF
     pdf_buffer = generate_invoice_pdf(invoice, order)
-
-    # Create temporary file
-    temp_dir = tempfile.gettempdir()
-    temp_filename = f"invoice_{invoice.invoice_id}_{int(time.time())}.pdf"
-    temp_filepath = os.path.join(temp_dir, temp_filename)
-
-    # Write PDF to temporary file
-    with open(temp_filepath, "wb") as f:
-        f.write(pdf_buffer.getvalue())
-
-    # Schedule file deletion after 10 minutes
-    background_tasks.add_task(_delete_file, temp_filepath)
-
-    # Return file response
-    return FileResponse(
-        path=temp_filepath,
+    return StreamingResponse(
+        iter([pdf_buffer.getvalue()]),
         media_type="application/pdf",
-        filename=f"{invoice.invoice_id}.pdf",
+        headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_id}.pdf"'},
     )
 
 
 @router.get("/id/{invoice_db_id}/pdf")
 async def download_invoice_pdf_by_id(
     invoice_db_id: int,
-    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Generate and download PDF invoice by database ID.
-    Creates a temporary file that auto-deletes after 10 minutes.
-    """
-    # Get invoice and check ownership
+    """Generate and stream PDF invoice by database ID."""
     result = await db.execute(select(Invoice).where(Invoice.id == invoice_db_id))
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    # Check if the invoice belongs to the current user (through the order)
     result = await db.execute(
         select(Order).where(
             Order.id == invoice.order_id, Order.created_by_user_id == current_user.id
@@ -425,26 +397,11 @@ async def download_invoice_pdf_by_id(
     if not order:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Generate PDF
     pdf_buffer = generate_invoice_pdf(invoice, order)
-
-    # Create temporary file
-    temp_dir = tempfile.gettempdir()
-    temp_filename = f"invoice_{invoice.invoice_id}_{int(time.time())}.pdf"
-    temp_filepath = os.path.join(temp_dir, temp_filename)
-
-    # Write PDF to temporary file
-    with open(temp_filepath, "wb") as f:
-        f.write(pdf_buffer.getvalue())
-
-    # Schedule file deletion after 10 minutes
-    background_tasks.add_task(_delete_file, temp_filepath)
-
-    # Return file response
-    return FileResponse(
-        path=temp_filepath,
+    return StreamingResponse(
+        iter([pdf_buffer.getvalue()]),
         media_type="application/pdf",
-        filename=f"{invoice.invoice_id}.pdf",
+        headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_id}.pdf"'},
     )
 
 

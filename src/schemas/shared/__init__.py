@@ -3,7 +3,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 from models.enums import InvoiceStatus as InvoiceStatusEnum
 from models.enums import OrderStatus as OrderStatusEnum
@@ -19,7 +19,8 @@ class UpdateUserProfile(BaseModel):
     passport_id: Optional[str] = None
     timezone: Optional[str] = None
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def validate_name(cls, v):
         if v is not None:
             if not re.match(
@@ -33,7 +34,8 @@ class UpdateUserProfile(BaseModel):
                 raise ValueError("Name must be at least 2 characters long")
         return v
 
-    @validator("date_of_birth")
+    @field_validator("date_of_birth")
+    @classmethod
     def validate_date_of_birth(cls, v):
         if v is not None:
             today = date.today()
@@ -68,30 +70,32 @@ class CreateOrder(BaseModel):
     image2_data: Optional[str] = None  # Base64 encoded image data
     image3_data: Optional[str] = None  # Base64 encoded image data
 
-    @validator("description")
+    @field_validator("description", mode="before")
+    @classmethod
     def validate_description(cls, v):
         if v is not None and len(v.strip()) == 0:
-            return None  # Treat empty strings as None
+            return None
         return v
 
 
-# New schema for order creation with file uploads
 class CreateOrderWithImages(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     description: Optional[str] = None
     city_id: int
     delivery_date: datetime
 
-    @validator("description")
+    @field_validator("description", mode="before")
+    @classmethod
     def validate_description(cls, v):
         if v is not None and len(v.strip()) == 0:
-            return None  # Treat empty strings as None
+            return None
         return v
-
-    class Config:
-        arbitrary_types_allowed = True
 
 
 class InvoiceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     invoice_id: str
     order_id: int
@@ -110,11 +114,10 @@ class InvoiceResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class OrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     order_id: str
     created_by_user_id: int
@@ -126,20 +129,16 @@ class OrderResponse(BaseModel):
     comments: Optional[str]
     updated_at: datetime
     city_id: int
-    invoice: Optional[InvoiceResponse] = None  # Include invoice information
-
-    class Config:
-        from_attributes = True
+    invoice: Optional[InvoiceResponse] = None
 
 
 class CityResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     icon: Optional[str]
     active: bool
-
-    class Config:
-        from_attributes = True
 
 
 class CreateInvoice(BaseModel):
@@ -154,7 +153,7 @@ class CreateInvoice(BaseModel):
     tax_amount: Optional[float] = 0.0
     discount_amount: Optional[float] = 0.0
 
-    @validator(
+    @field_validator(
         "full_amount",
         "service_fee",
         "order_only_price",
@@ -162,11 +161,11 @@ class CreateInvoice(BaseModel):
         "tax_amount",
         "discount_amount",
     )
+    @classmethod
     def validate_amount(cls, v):
         if v is not None:
             if v < 0:
                 raise ValueError("Amount cannot be negative")
-            # Check for at most 3 decimal places
             if round(v, 3) != v:
                 raise ValueError("Amount must have at most 3 decimal places")
         return v
@@ -182,10 +181,12 @@ class AssignOrderRequest(BaseModel):
 
 # Chat schemas
 class CreateConversationRequest(BaseModel):
-    other_user_id: int  # The ID of the other user (customer or courier)
+    other_user_id: int
 
 
 class ConversationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     customer_id: int
     courier_id: Optional[int]
@@ -193,28 +194,25 @@ class ConversationResponse(BaseModel):
     status: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class SendMessageRequest(BaseModel):
     content: str
-    message_type: str = "text"  # "text", "invoice", "image", "video", "system"
-    media_type: Optional[str] = (
-        None  # "image" or "video" when message_type is "image" or "video"
-    )
+    message_type: str = "text"
+    media_type: Optional[str] = None
     invoice_description: Optional[str] = None
     invoice_gift_price: Optional[int] = None
     invoice_service_fee: Optional[int] = None
     invoice_delivery_fee: Optional[int] = None
     invoice_total: Optional[int] = None
-    media_url: Optional[str] = None  # URL to uploaded media file
+    media_url: Optional[str] = None
 
 
 class MessageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     conversation_id: int
-    sender_id: Optional[int]  # Nullable for system messages
+    sender_id: Optional[int]
     content: str
     sent_at: datetime
     message_type: str
@@ -224,22 +222,18 @@ class MessageResponse(BaseModel):
     invoice_service_fee: Optional[int]
     invoice_delivery_fee: Optional[int]
     invoice_total: Optional[int]
-    media_url: Optional[str]  # URL to uploaded media file
-
-    class Config:
-        from_attributes = True
+    media_url: Optional[str]
 
 
 # Wallet schemas
 class WalletResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     balance: int
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class CreateWallet(BaseModel):
@@ -248,13 +242,14 @@ class CreateWallet(BaseModel):
 
 
 class UpdateWalletBalance(BaseModel):
-    amount: int  # Positive for deposit, negative for withdrawal
+    amount: int
 
 
 class ChargeWalletRequest(BaseModel):
-    amount: int  # Amount to charge in riyals (not cents)
+    amount: int
 
-    @validator("amount")
+    @field_validator("amount")
+    @classmethod
     def validate_amount(cls, v):
         if v < 10:
             raise ValueError("Minimum charge amount is 10 riyals")
@@ -264,22 +259,22 @@ class ChargeWalletRequest(BaseModel):
 
 
 class RequestWalletDeposit(BaseModel):
-    amount: float  # Amount to request in riyals with decimals
+    amount: float
 
-    @validator("amount")
+    @field_validator("amount")
+    @classmethod
     def validate_amount(cls, v):
         if v < 10:
             raise ValueError("Minimum deposit amount is 10 riyals")
-        # Check for exactly 2 decimal places
         if round(v, 2) != v:
             raise ValueError("Amount must have exactly 2 decimal places")
         return v
 
 
-# Payment schemas - using enums from models.enums
-
-
+# Payment schemas
 class PaymentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     invoice_id: int
     user_id: int
@@ -292,9 +287,6 @@ class PaymentResponse(BaseModel):
     wallet_balance_before: Optional[int]
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class CreatePayment(BaseModel):
@@ -314,6 +306,8 @@ class UpdatePaymentStatus(BaseModel):
 
 # Promocode schemas
 class PromocodeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     code: str
@@ -328,9 +322,6 @@ class PromocodeResponse(BaseModel):
     applicable_to: str
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class CreatePromocode(BaseModel):
@@ -369,7 +360,8 @@ class CreateImportantEventRequest(BaseModel):
     event_date: datetime
     recurring: Optional[bool] = False
 
-    @validator("title")
+    @field_validator("title")
+    @classmethod
     def validate_title(cls, v):
         if not v or len(v.strip()) == 0:
             raise ValueError("Title is required")
@@ -377,7 +369,8 @@ class CreateImportantEventRequest(BaseModel):
             raise ValueError("Title must be less than 200 characters")
         return v.strip()
 
-    @validator("event_date")
+    @field_validator("event_date")
+    @classmethod
     def validate_event_date(cls, v):
         if v < datetime.utcnow():
             raise ValueError("Event date cannot be in the past")
@@ -385,6 +378,8 @@ class CreateImportantEventRequest(BaseModel):
 
 
 class ImportantEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     title: str
@@ -393,16 +388,14 @@ class ImportantEventResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class UpdateImportantEventRequest(BaseModel):
     title: Optional[str] = None
     event_date: Optional[datetime] = None
     recurring: Optional[bool] = None
 
-    @validator("title")
+    @field_validator("title")
+    @classmethod
     def validate_title(cls, v):
         if v is not None:
             if len(v.strip()) == 0:
@@ -412,7 +405,8 @@ class UpdateImportantEventRequest(BaseModel):
             return v.strip()
         return v
 
-    @validator("event_date")
+    @field_validator("event_date")
+    @classmethod
     def validate_event_date(cls, v):
         if v is not None and v < datetime.utcnow():
             raise ValueError("Event date cannot be in the past")

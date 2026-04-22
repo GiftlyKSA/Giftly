@@ -123,6 +123,41 @@ async def get_current_user(
                 detail="Refresh token not allowed for this endpoint",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        if payload.get("temp"):
+            raise credentials_exception
+        user_id = int(sub)
+    except (JWTError, ValueError):
+        raise credentials_exception
+
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.courier_profile), selectinload(User.customer_profile))
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+async def get_profile_user(
+    db: AsyncSession = Depends(get_db), token: str = Depends(security)
+) -> User:
+    """Accepts temp tokens issued by verify_otp for the complete-profile flow."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(
+            token.credentials, settings.secret_key, algorithms=["HS256"]
+        )
+        sub: str = payload.get("sub")
+        if sub is None:
+            raise credentials_exception
+        if payload.get("type") == "refresh":
+            raise credentials_exception
         user_id = int(sub)
     except (JWTError, ValueError):
         raise credentials_exception

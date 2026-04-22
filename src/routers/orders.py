@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 import traceback
 from datetime import datetime, time, timezone
@@ -18,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models import (
+    Admin,
     City,
+    Conversation,
     CourierBalanceAddition,
     CourierProfile,
     Invoice,
@@ -34,8 +37,10 @@ from models.enums import (
     InvoiceStatus,
     OrderStatus,
     PaymentMethod,
+    PaymentStatus,
     UserRole,
 )
+from routers.admin import authenticate_admin
 from schemas import AssignOrderRequest, CancelOrderRequest, CreateOrder, OrderResponse
 from utils.auth.auth import get_current_user
 from utils.clients.storage_client import upload_image
@@ -84,16 +89,15 @@ async def create_order(
                 "image/png",
                 "image/gif",
                 "image/webp",
-                "image/svg+xml",
             ]
             if img.content_type not in allowed_mime_types:
                 file_ext = (
                     img.filename.split(".")[-1].lower() if "." in img.filename else ""
                 )
-                if file_ext not in ["jpg", "jpeg", "png", "gif", "webp", "svg"]:
+                if file_ext not in ["jpg", "jpeg", "png", "gif", "webp"]:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Image {i}: Only image files are allowed (JPEG, PNG, GIF, WebP, SVG)",
+                        detail=f"Image {i}: Only image files are allowed (JPEG, PNG, GIF, WebP)",
                     )
             uploaded_images.append((i, img))
 
@@ -130,9 +134,8 @@ async def create_order(
             }
         except Exception as e:
             await db.rollback()
-            raise HTTPException(
-                status_code=500, detail=f"Failed to upload image: {str(e)}"
-            )
+            logging.error("Image upload failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Image upload failed. Please try again.")
 
     db.add(OrderImage(order_id=new_order.id, **image_urls))
 
@@ -319,9 +322,21 @@ async def cancel_order(
         )
 
     order.status = OrderStatus.CANCELLED
-    order.comments = (
-        f"{cancel_data.reason} by ID:{current_user.id} and name:{current_user.name}"
-    )
+    order.comments = cancel_data.reason
+
+    # Invalidate any pending payments so a completed webhook cannot reactivate the order
+    if order.invoice:
+        if order.invoice.status not in (InvoiceStatus.PAID, InvoiceStatus.CANCELLED):
+            order.invoice.status = InvoiceStatus.CANCELLED
+        await db.execute(
+            update(Payment)
+            .where(
+                Payment.invoice_id == order.invoice.id,
+                Payment.status == PaymentStatus.PENDING,
+            )
+            .values(status=PaymentStatus.FAILED)
+        )
+
     await db.commit()
     await db.refresh(order)
 
@@ -333,10 +348,10 @@ async def cancel_order(
 async def assign_order(
     order_id: str,
     request: AssignOrderRequest,
-    current_user: User = Depends(get_current_user),
+    current_admin: Admin = Depends(authenticate_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Assign an order to a courier. Admin use only."""
+    """Assign an order to a courier. Admin only (HTTP Basic Auth)."""
     result = await db.execute(
         select(Order)
         .options(
@@ -364,7 +379,7 @@ async def assign_order(
 
     order.assigned_to_user_id = request.assigned_to_user_id
     order.status = OrderStatus.RECEIVED_BY_COURIER
-    order.comments = f"Assigned to courier ID:{request.assigned_to_user_id} by admin ID:{current_user.id}"
+    order.comments = f"Assigned to courier ID:{request.assigned_to_user_id} by admin ID:{current_admin.id}"
 
     if order.conversation:
         order.conversation.courier_id = request.assigned_to_user_id
@@ -422,6 +437,19 @@ async def accept_order(
     if current_user.role != UserRole.COURIER:
         raise HTTPException(status_code=403, detail="Only couriers can accept orders")
 
+    # Check courier profile before attempting to claim the order
+    result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Courier profile not found")
+    if not profile.is_approved:
+        raise HTTPException(status_code=403, detail="Your account is not yet approved")
+    if not profile.is_available:
+        raise HTTPException(status_code=403, detail="You are currently marked as unavailable")
+
+    # Load order for pre-claim validation (non-locking read)
     result = await db.execute(
         select(Order)
         .options(
@@ -435,38 +463,39 @@ async def accept_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    if order.status != OrderStatus.NEW:
-        raise HTTPException(status_code=400, detail="Order is no longer available")
-
-    result = await db.execute(
-        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
-    )
-    profile = result.scalar_one_or_none()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Courier profile not found")
-
-    # Guard: only approved, available couriers can accept
-    if not profile.is_approved:
-        raise HTTPException(status_code=403, detail="Your account is not yet approved")
-    if not profile.is_available:
-        raise HTTPException(
-            status_code=403, detail="You are currently marked as unavailable"
-        )
-
     if order.city_id != profile.city_id:
         raise HTTPException(status_code=400, detail="Order is not in your city")
 
-    order.assigned_to_user_id = current_user.id
-    order.status = OrderStatus.RECEIVED_BY_COURIER
-    order.comments = (
-        f"Accepted by courier ID:{current_user.id} and name:{current_user.name}"
+    # Atomically claim the order — only one courier wins if two accept simultaneously
+    claim = await db.execute(
+        update(Order)
+        .where(Order.order_id == order_id, Order.status == OrderStatus.NEW)
+        .values(
+            assigned_to_user_id=current_user.id,
+            status=OrderStatus.RECEIVED_BY_COURIER,
+            comments=f"Accepted by courier ID:{current_user.id}",
+            updated_at=datetime.now(timezone.utc),
+        )
     )
+    if claim.rowcount == 0:
+        raise HTTPException(status_code=400, detail="Order is no longer available")
 
     if order.conversation:
         order.conversation.courier_id = current_user.id
 
     await db.commit()
-    await db.refresh(order)
+
+    # Reload with updated state for the response
+    result = await db.execute(
+        select(Order)
+        .options(
+            selectinload(Order.invoice),
+            selectinload(Order.conversation),
+            selectinload(Order.created_by_user),
+        )
+        .where(Order.order_id == order_id)
+    )
+    order = result.scalar_one_or_none()
 
     from models import Message
     from utils.websocket.websocket_events import emit_chat_message
@@ -686,7 +715,10 @@ async def complete_order(
 
     try:
         courier_fee = order.invoice.courier_fee
-        # Use atomic update to prevent race conditions
+        # Read balance_before BEFORE the update to avoid concurrency-derived value
+        balance_before = courier_wallet.balance
+
+        # Atomic wallet credit
         await db.execute(
             update(Wallet)
             .where(Wallet.user_id == current_user.id)
@@ -695,23 +727,15 @@ async def complete_order(
                 updated_at=datetime.now(timezone.utc),
             )
         )
-        # Get updated balance for logging/record keeping
-        result = await db.execute(
-            select(Wallet.balance).where(Wallet.user_id == current_user.id)
-        )
-        balance_after = result.scalar_one()
-        balance_before = balance_after - courier_fee
 
         order.status = OrderStatus.DONE
-        order.comments = (
-            f"Completed by courier ID:{current_user.id} and name:{current_user.name}"
-        )
+        order.comments = f"Completed by courier ID:{current_user.id}"
         order.updated_at = datetime.now(timezone.utc)
 
         result = await db.execute(
             select(Payment).where(
                 Payment.invoice_id == order.invoice.id,
-                Payment.status == "completed",
+                Payment.status == PaymentStatus.COMPLETED,
             )
         )
         payment = result.scalar_one_or_none()

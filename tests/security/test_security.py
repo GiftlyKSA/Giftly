@@ -139,31 +139,35 @@ async def test_sql_injection_in_phone_safe(mock_sms, client):
 
 
 @patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
-async def test_xss_in_name_safe(mock_sms, client, db: AsyncSession):
-    """XSS payload in name should be stored as plain text, not executed."""
+@patch("tasks.email_tasks.send_welcome_email_task.kiq", new_callable=AsyncMock)
+async def test_xss_in_name_safe(mock_welcome, mock_sms, client, db: AsyncSession):
+    """XSS payload in name should be rejected or stored as plain text, not executed."""
+    from models import User as _User
     phone = "+966511111901"
     await client.post("/auth/send-otp", json={"phone_number": phone})
     normalized = re.sub(r"^(\+966|0)+", "", phone)
-    result = await db.execute(
-        select(__import__("models").User).where(
-            __import__("models").User.phone_number == normalized
-        )
-    )
+    result = await db.execute(select(_User).where(_User.phone_number == normalized))
     user = result.scalar_one()
-    user.is_verified = False
-    await db.commit()
+    otp = user.otp
+
+    # obtain temp token
+    verify_resp = await client.post(
+        "/auth/verify-otp",
+        json={"phone_number": phone, "otp": otp, "device_id": "sec-test"},
+    )
+    temp_token = verify_resp.json()["access_token"]
 
     resp = await client.post(
         "/auth/complete-profile",
         json={
-            "phone_number": phone,
             "name": "<script>alert(1)</script>",
             "email": "xss@test.com",
             "date_of_birth": "1990-01-01",
         },
+        headers={"Authorization": f"Bearer {temp_token}"},
     )
     # 200 means it was accepted and stored as literal text (OK for an API)
-    # 422 means the framework rejected it (also OK)
+    # 400/422 means the framework rejected it (also OK)
     # Must NOT be 500
     assert resp.status_code in (200, 400, 422)
 

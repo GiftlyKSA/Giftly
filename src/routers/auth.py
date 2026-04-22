@@ -15,6 +15,7 @@ from utils.auth.auth import (
     create_tokens,
     generate_otp,
     get_current_user,
+    get_profile_user,
     get_user_by_phone,
     validate_refresh_token,
 )
@@ -71,7 +72,8 @@ def _check_phone_verify_rate_limit(phone: str) -> None:
 async def send_otp(
     otp_request: SendOTP, db: AsyncSession = Depends(get_db)
 ):
-    phone_number = otp_request.phone_number
+    # Normalize phone to prevent rate-limit bypass via format variations (+966, 0-prefix, etc.)
+    phone_number = re.sub(r"^(\+966|0)+", "", otp_request.phone_number)
 
     # Per-phone rate limit (3 requests / 10 min)
     _check_phone_rate_limit(phone_number)
@@ -103,8 +105,9 @@ async def send_otp(
 
 @router.post("/verify-otp", response_model=Token)
 async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
-    # Per-phone rate limit for verification (3 requests / 10 min)
-    _check_phone_verify_rate_limit(otp_data.phone_number)
+    # Normalize phone before rate limit to prevent bypass via format variations
+    normalized_phone = re.sub(r"^(\+966|0)+", "", otp_data.phone_number)
+    _check_phone_verify_rate_limit(normalized_phone)
     user = await get_user_by_phone(db, otp_data.phone_number)
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
@@ -212,7 +215,7 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
             }
         else:
             temp_token = create_access_token(
-                data={"sub": user.phone_number, "temp": True},
+                data={"sub": str(user.id), "temp": True},
                 expires_delta=timedelta(minutes=30),
             )
             await db.commit()
@@ -348,9 +351,10 @@ async def refresh_access_token(
 @router.post("/complete-profile", response_model=Token)
 async def complete_profile(
     profile_data: dict,
+    current_user: User = Depends(get_profile_user),
     db: AsyncSession = Depends(get_db),
 ):
-    phone_number = profile_data.get("phone_number")
+    phone_number = current_user.phone_number  # always use authenticated user's phone
     name = profile_data.get("name")
     email = profile_data.get("email")
     date_of_birth_str = profile_data.get("date_of_birth")
@@ -371,9 +375,7 @@ async def complete_profile(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
 
-    user = await get_user_by_phone(db, phone_number)
-    if not user:
-        raise HTTPException(status_code=400, detail="User not found")
+    user = current_user
     if user.is_verified:
         raise HTTPException(status_code=400, detail="Profile already completed")
 
@@ -461,6 +463,8 @@ async def update_push_token(
     push_token = data.get("push_token", "").strip()
     if not push_token:
         raise HTTPException(status_code=400, detail="push_token is required")
+    if len(push_token) > 300:
+        raise HTTPException(status_code=400, detail="Invalid push token")
 
     if current_user.role == UserRole.CUSTOMER:
         if current_user.customer_profile:
@@ -498,17 +502,15 @@ async def logout(
 
 # ---------------------------------------------------------------------------
 # DEV ONLY — returns the stored OTP so tests can run without an SMS provider
-# Disabled automatically when DEBUG=false in .env
+# Route registered only when DEBUG=true so it cannot exist in production
 # ---------------------------------------------------------------------------
 
+if settings.debug:
 
-@router.get("/dev/otp")
-async def dev_get_otp(phone_number: str, db: AsyncSession = Depends(get_db)):
-    if not settings.debug:
-        raise HTTPException(status_code=404, detail="Not found")
+    @router.get("/dev/otp")
+    async def dev_get_otp(phone_number: str, db: AsyncSession = Depends(get_db)):
+        user = await get_user_by_phone(db, phone_number)
+        if not user or not user.otp:
+            raise HTTPException(status_code=404, detail="No pending OTP for this number")
 
-    user = await get_user_by_phone(db, phone_number)
-    if not user or not user.otp:
-        raise HTTPException(status_code=404, detail="No pending OTP for this number")
-
-    return {"phone_number": phone_number, "otp": user.otp}
+        return {"phone_number": phone_number, "otp": user.otp}

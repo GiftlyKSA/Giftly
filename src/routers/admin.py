@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from utils.auth.auth import verify_password
+from utils.database.config import settings
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -124,6 +125,8 @@ async def admin_charge_wallet(
         raise HTTPException(
             status_code=400, detail="amount must be a positive integer (halaym)"
         )
+    if amount > settings.admin_wallet_charge_max_halalas:
+        raise HTTPException(status_code=400, detail=f"Amount exceeds maximum allowed ({settings.admin_wallet_charge_max_halalas:,} halalas)")
 
     result = await db.execute(select(Wallet).where(Wallet.user_id == user_id))
     wallet = result.scalar_one_or_none()

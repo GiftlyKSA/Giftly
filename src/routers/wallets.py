@@ -40,11 +40,16 @@ async def initiate_wallet_charge(
     """
     Initiate a wallet top-up via Paylink.sa.
     Returns a payment URL the client should open in-browser / in-app.
-    Minimum charge: 10 SAR.
+    Only customers may top up. Charge range: 10–100 SAR.
     """
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can charge their wallet")
+
     amount_sar = data.get("amount_sar")
-    if not isinstance(amount_sar, (int, float)) or amount_sar < 10:
-        raise HTTPException(status_code=400, detail="Minimum charge amount is 10 SAR")
+    if not isinstance(amount_sar, (int, float)) or amount_sar < settings.wallet_charge_min_sar:
+        raise HTTPException(status_code=400, detail=f"Minimum charge amount is {settings.wallet_charge_min_sar} SAR")
+    if amount_sar > settings.wallet_charge_max_sar:
+        raise HTTPException(status_code=400, detail=f"Maximum charge amount is {settings.wallet_charge_max_sar} SAR")
 
     if not settings.paylink_api_key:
         raise HTTPException(
@@ -93,7 +98,7 @@ async def initiate_wallet_charge(
         # Roll back the pending payment if gateway call fails
         new_payment.status = PaymentStatus.FAILED
         await db.commit()
-        raise HTTPException(status_code=502, detail=f"Payment gateway error: {str(e)}")
+        raise HTTPException(status_code=502, detail="Payment gateway error. Please try again.")
 
     payment_url = response.get("url") or response.get("paymentUrl")
     transaction_id = response.get("transactionNo") or response.get("id")

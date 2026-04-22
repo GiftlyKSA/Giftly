@@ -5,7 +5,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 
 class OrderStatusEnum(str, Enum):
@@ -38,14 +38,11 @@ class InvoiceStatusEnum(str, Enum):
 class SendOTP(BaseModel):
     phone_number: str
 
-    @validator("phone_number")
+    @field_validator("phone_number")
+    @classmethod
     def validate_phone_number(cls, v):
-        # Basic phone number validation (Saudi format)
         if not re.match(r"^(\+966|0)?[5][0-9]{8}$", v):
             raise ValueError("Invalid Saudi phone number format")
-
-        # Normalize phone number by removing leading zeros
-        # Convert "0559644339" to "559644339"
         clean = re.sub(r"^(\+966|0)+", "", v)
         return clean
 
@@ -61,17 +58,16 @@ class OTPVerify(BaseModel):
     passport_id: Optional[str] = None
     timezone: Optional[str] = None
 
-    @validator("phone_number")
+    @field_validator("phone_number")
+    @classmethod
     def validate_phone_number(cls, v):
         if not re.match(r"^(\+966|0)?[5][0-9]{8}$", v):
             raise ValueError("Invalid Saudi phone number format")
-
-        # Normalize phone number by removing leading zeros
-        # Convert "0559644339" to "559644339"
         clean = re.sub(r"^(\+966|0)+", "", v)
         return clean
 
-    @validator("otp")
+    @field_validator("otp")
+    @classmethod
     def validate_otp(cls, v):
         if not re.match(r"^\d{6}$", v):
             raise ValueError("OTP must be 6 digits")

@@ -1,7 +1,7 @@
 import os
 import re
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     email_from_address: str = ""
     email_from_name: str = "Giftly"
     email_api_key: str = ""   # API key for HTTP-based providers
+
+    # Chat message limits
+    chat_msg_max_chars: int = 300
+    chat_image_max_bytes: int = 6 * 1024 * 1024   # 6 MB
+    chat_video_max_bytes: int = 70 * 1024 * 1024  # 70 MB
+    chat_video_max_secs: int = 30
+
+    # Wallet charge limits (SAR)
+    wallet_charge_min_sar: int = 10
+    wallet_charge_max_sar: int = 100
+
+    # Admin wallet charge limit (halalas; 1 SAR = 100 halalas)
+    admin_wallet_charge_max_halalas: int = 1_000_000
 
     # Security headers
     hsts_max_age_seconds: int = 31536000
@@ -88,8 +101,7 @@ class Settings(BaseSettings):
                     f"Environment variable {var_name} is required but not set"
                 )
 
-    class Config:
-        env_file = os.path.join(os.path.dirname(__file__), ".env")
+    model_config = SettingsConfigDict(env_file=os.path.join(os.path.dirname(__file__), ".env"))
 
 
 settings = Settings()

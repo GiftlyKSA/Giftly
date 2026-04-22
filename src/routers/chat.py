@@ -1,6 +1,10 @@
+import html
+import logging
+import struct
 from typing import List
 
 from utils.auth.auth import get_current_user
+from utils.database.config import settings
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import desc, select
@@ -11,6 +15,63 @@ from schemas import ConversationResponse, CreateConversationRequest, MessageResp
 from utils.clients.storage_client import upload_media
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Media validation constants (overridable via env — see Settings)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png"}
+_ALLOWED_IMAGE_EXTS  = {"jpg", "jpeg", "png"}
+_ALLOWED_VIDEO_MIMES = {"video/mp4", "video/quicktime"}
+_ALLOWED_VIDEO_EXTS  = {"mp4", "mov"}
+
+_HEADER_READ_SIZE = 5 * 1024 * 1024   # read up to 5 MB to locate mvhd box
+
+
+def _image_magic_ok(header: bytes, ext: str) -> bool:
+    if ext in ("jpg", "jpeg"):
+        return header[:3] == b"\xff\xd8\xff"
+    if ext == "png":
+        return header[:8] == b"\x89PNG\r\n\x1a\n"
+    return False
+
+
+def _video_magic_ok(header: bytes) -> bool:
+    """MP4/MOV containers start with a box whose type is usually 'ftyp'."""
+    if len(header) < 8:
+        return False
+    box_type = header[4:8]
+    return box_type in (b"ftyp", b"mdat", b"free", b"skip", b"wide", b"moov")
+
+
+def _mp4_duration(data: bytes):
+    """Return video duration in seconds parsed from an MP4/MOV container, or None."""
+    def _boxes(buf):
+        i = 0
+        while i + 8 <= len(buf):
+            sz = struct.unpack(">I", buf[i:i+4])[0]
+            if sz < 8:
+                break
+            yield sz, buf[i+4:i+8], buf[i+8:i+sz]
+            i += sz
+
+    for _, btype, bdata in _boxes(data):
+        if btype == b"moov":
+            for _, itype, idata in _boxes(bdata):
+                if itype == b"mvhd":
+                    if len(idata) < 20:
+                        return None
+                    ver = idata[0]
+                    if ver == 0:
+                        ts = struct.unpack(">I", idata[12:16])[0]
+                        dur = struct.unpack(">I", idata[16:20])[0]
+                    else:
+                        if len(idata) < 32:
+                            return None
+                        ts = struct.unpack(">I", idata[20:24])[0]
+                        dur = struct.unpack(">Q", idata[24:32])[0]
+                    return dur / ts if ts else None
+    return None
 
 
 @router.post("/conversations", response_model=ConversationResponse)
@@ -159,73 +220,50 @@ async def send_message(
             detail="Not authorized to send messages in this conversation",
         )
 
-    # Validate message type
-    valid_message_types = ["text", "invoice", "image", "video", "system"]
+    # Block system messages from clients — only server-side code may create them
+    valid_message_types = ["text", "invoice", "image", "video"]
     if message_type not in valid_message_types:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid message type. Valid types: {', '.join(valid_message_types)}",
         )
 
+    # Enforce content length and escape HTML
+    if len(content.strip()) > settings.chat_msg_max_chars:
+        raise HTTPException(status_code=400, detail=f"Message too long (max {settings.chat_msg_max_chars} characters)")
+    content = html.escape(content.strip())
+
     # Validate media file if provided
     media_url = None
     if media_file is not None:
-        # Check file size limits
-        if (
-            message_type == "image" and media_file.size > 15 * 1024 * 1024
-        ):  # 15MB for images
-            raise HTTPException(
-                status_code=400, detail="Image file size exceeds 15MB limit"
-            )
-        elif (
-            message_type == "video" and media_file.size > 100 * 1024 * 1024
-        ):  # 100MB for videos
-            raise HTTPException(
-                status_code=400, detail="Video file size exceeds 100MB limit"
-            )
-
-        # Check file type
-        allowed_image_types = [
-            "image/jpeg",
-            "image/png",
-            "image/gif",
-            "image/webp",
-            "image/svg+xml",
-        ]
-        allowed_video_types = [
-            "video/mp4",
-            "video/avi",
-            "video/mov",
-            "video/mkv",
-            "video/webm",
-        ]
-        allowed_image_exts = ["jpg", "jpeg", "png", "gif", "webp", "svg"]
-        allowed_video_exts = ["mp4", "avi", "mov", "mkv", "webm"]
-
         file_ext = (
             media_file.filename.split(".")[-1].lower()
-            if "." in media_file.filename
+            if media_file.filename and "." in media_file.filename
             else ""
         )
 
         if message_type == "image":
-            if (
-                media_file.content_type not in allowed_image_types
-                and file_ext not in allowed_image_exts
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Only image files are allowed (JPEG, PNG, GIF, WebP, SVG)",
-                )
+            if media_file.content_type not in _ALLOWED_IMAGE_MIMES or file_ext not in _ALLOWED_IMAGE_EXTS:
+                raise HTTPException(status_code=400, detail="Only JPEG and PNG images are allowed")
+            if media_file.size and media_file.size > settings.chat_image_max_bytes:
+                raise HTTPException(status_code=400, detail=f"Image exceeds {settings.chat_image_max_bytes // (1024*1024)} MB limit")
+            header = await media_file.read(16)
+            await media_file.seek(0)
+            if not _image_magic_ok(header, file_ext):
+                raise HTTPException(status_code=400, detail="File content does not match image type")
+
         elif message_type == "video":
-            if (
-                media_file.content_type not in allowed_video_types
-                and file_ext not in allowed_video_exts
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Only video files are allowed (MP4, AVI, MOV, MKV, WebM)",
-                )
+            if media_file.content_type not in _ALLOWED_VIDEO_MIMES or file_ext not in _ALLOWED_VIDEO_EXTS:
+                raise HTTPException(status_code=400, detail="Only MP4 and MOV videos are allowed")
+            if media_file.size and media_file.size > settings.chat_video_max_bytes:
+                raise HTTPException(status_code=400, detail=f"Video exceeds {settings.chat_video_max_bytes // (1024*1024)} MB limit")
+            header_data = await media_file.read(_HEADER_READ_SIZE)
+            await media_file.seek(0)
+            if not _video_magic_ok(header_data[:8]):
+                raise HTTPException(status_code=400, detail="File content does not match video type")
+            duration = _mp4_duration(header_data)
+            if duration is not None and duration > settings.chat_video_max_secs:
+                raise HTTPException(status_code=400, detail=f"Video exceeds {settings.chat_video_max_secs} second limit")
 
         # Upload media file
         try:
@@ -237,9 +275,8 @@ async def send_message(
             )
             media_url = upload_result["url"]
         except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to upload media file: {str(e)}"
-            )
+            logging.error("Media upload failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to upload media file. Please try again.")
 
     # For invoice messages, ensure all invoice fields are provided
     if message_type == "invoice":

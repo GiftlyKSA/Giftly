@@ -164,9 +164,7 @@ async def create_payment(
         except Exception as e:
             new_payment.status = PaymentStatus.FAILED
             await db.commit()
-            raise HTTPException(
-                status_code=502, detail=f"Payment gateway error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail="Payment gateway error. Please try again.")
 
         new_payment.transaction_id = str(
             resp.get("transactionNo") or resp.get("id") or ""
@@ -235,12 +233,15 @@ async def paylink_callback(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    if payment.status != PaymentStatus.PENDING:
-        return {"message": "Already processed"}
-
     if paylink_status in ("paid", "completed", "success"):
-        payment.status = PaymentStatus.COMPLETED
-        payment.payment_date = datetime.now(timezone.utc)
+        # Atomic update prevents double-credit when Paylink retries the webhook concurrently
+        atomic = await db.execute(
+            update(Payment)
+            .where(Payment.id == payment.id, Payment.status == PaymentStatus.PENDING)
+            .values(status=PaymentStatus.COMPLETED, payment_date=datetime.now(timezone.utc))
+        )
+        if atomic.rowcount == 0:
+            return {"message": "Already processed"}
         await db.commit()
 
         # Invoice payment: mark invoice + order paid
@@ -273,7 +274,13 @@ async def paylink_callback(
             await db.commit()
 
     else:
-        payment.status = PaymentStatus.FAILED
+        failed = await db.execute(
+            update(Payment)
+            .where(Payment.id == payment.id, Payment.status == PaymentStatus.PENDING)
+            .values(status=PaymentStatus.FAILED)
+        )
+        if failed.rowcount == 0:
+            return {"message": "Already processed"}
         await db.commit()
 
     return {"message": "Callback processed"}

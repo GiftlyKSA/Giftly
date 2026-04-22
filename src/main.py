@@ -1,5 +1,8 @@
 import base64
+import hashlib
+import html
 import logging
+import time
 from contextlib import asynccontextmanager
 
 import bcrypt
@@ -141,7 +144,11 @@ app.include_router(couriers.router, prefix="/couriers", tags=["couriers"])
 
 # ---------------------------------------------------------------------------
 # Admin middleware (Basic auth gate for /admin/* routes)
+# Cache successful bcrypt verifications for 60 s to avoid bcrypt DoS on static assets
 # ---------------------------------------------------------------------------
+
+_admin_auth_cache: dict[str, float] = {}  # sha256(Authorization) -> expiry monotonic
+_ADMIN_AUTH_CACHE_TTL = 60  # seconds
 
 
 @app.middleware("http")
@@ -154,6 +161,17 @@ async def admin_auth_middleware(request: Request, call_next):
                 content={"detail": "Authentication required"},
                 headers={"WWW-Authenticate": "Basic"},
             )
+
+        now = time.monotonic()
+        cache_key = hashlib.sha256(auth_header.encode()).hexdigest()
+
+        # Evict expired entries (admin panel has few users — O(n) is fine)
+        expired = [k for k, v in _admin_auth_cache.items() if v <= now]
+        for k in expired:
+            del _admin_auth_cache[k]
+
+        if _admin_auth_cache.get(cache_key, 0) > now:
+            return await call_next(request)
 
         try:
             encoded_credentials = auth_header.split(" ")[1]
@@ -175,6 +193,8 @@ async def admin_auth_middleware(request: Request, call_next):
                         content={"detail": "Invalid credentials"},
                         headers={"WWW-Authenticate": "Basic"},
                     )
+
+            _admin_auth_cache[cache_key] = now + _ADMIN_AUTH_CACHE_TTL
         except Exception:
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -332,16 +352,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 message_content = data.get("content")
                 # Basic input sanitization to prevent injection attacks
                 if room and message_content and room.startswith("chat_"):
-                    # Sanitize message content - remove any potential harmful content
-                    # Limit message length to prevent DoS
+                    # Limit length, strip control characters, then HTML-escape to prevent XSS
                     if len(message_content) > 1000:
                         message_content = message_content[:1000] + "..."
-                    # Remove any null bytes or control characters that could cause issues
                     message_content = "".join(
                         char
                         for char in message_content
                         if ord(char) >= 32 or char in "\n\r\t"
                     )
+                    message_content = html.escape(message_content)
                     try:
                         conversation_id = int(room.split("_")[1])
                         conv_result = await db.execute(
@@ -359,11 +378,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                 sender_id=user.id,
                                 content=message_content,
                                 message_type=data.get("message_type", "text"),
-                                invoice_description=data.get("invoice_description"),
-                                invoice_gift_price=data.get("invoice_gift_price"),
-                                invoice_service_fee=data.get("invoice_service_fee"),
-                                invoice_delivery_fee=data.get("invoice_delivery_fee"),
-                                invoice_total=data.get("invoice_total"),
                             )
                             db.add(new_message)
                             await db.commit()
@@ -380,11 +394,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                         "content": new_message.content,
                                         "message_type": new_message.message_type,
                                         "sent_at": new_message.sent_at.isoformat(),
-                                        "invoice_description": new_message.invoice_description,
-                                        "invoice_gift_price": new_message.invoice_gift_price,
-                                        "invoice_service_fee": new_message.invoice_service_fee,
-                                        "invoice_delivery_fee": new_message.invoice_delivery_fee,
-                                        "invoice_total": new_message.invoice_total,
                                     },
                                 },
                                 room,

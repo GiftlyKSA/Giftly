@@ -164,39 +164,58 @@ async def test_complete_profile(mock_email, mock_sms, client, db: AsyncSession):
     phone = "+966511111301"
     await _send_otp(client, phone)
 
+    normalized = re.sub(r"^(\+966|0)+", "", phone)
+    result = await db.execute(select(User).where(User.phone_number == normalized))
+    user = result.scalar_one()
+    otp = user.otp
+
+    # obtain temp token from verify-otp
+    verify_resp = await _verify_otp(client, phone, otp)
+    assert verify_resp.status_code == 200
+    temp_token = verify_resp.json()["access_token"]
+
     resp = await client.post(
         "/auth/complete-profile",
         json={
-            "phone_number": phone,
             "name": "New User",
             "email": "newuser@test.com",
             "date_of_birth": "1995-03-15",
             "role": "Customer",
         },
+        headers={"Authorization": f"Bearer {temp_token}"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["access_token"]
     assert body["needs_profile"] is False
 
-    normalized = re.sub(r"^(\+966|0)+", "", phone)
+    await db.reset()
     result = await db.execute(select(User).where(User.phone_number == normalized))
     user = result.scalar_one()
     assert user.is_verified is True
 
 
 @patch("tasks.email_tasks.send_sms_task.kiq", new_callable=AsyncMock)
-async def test_complete_profile_duplicate_email(mock_sms, client, customer: User):
+async def test_complete_profile_duplicate_email(mock_sms, client, db: AsyncSession, customer: User):
     phone = "+966511111302"
     await _send_otp(client, phone)
+
+    normalized = re.sub(r"^(\+966|0)+", "", phone)
+    result = await db.execute(select(User).where(User.phone_number == normalized))
+    user = result.scalar_one()
+    otp = user.otp
+
+    verify_resp = await _verify_otp(client, phone, otp)
+    temp_token = verify_resp.json()["access_token"]
+
     resp = await client.post(
         "/auth/complete-profile",
         json={
-            "phone_number": phone,
             "name": "Another User",
             "email": customer.email,  # already taken
             "date_of_birth": "1995-01-01",
         },
+        headers={"Authorization": f"Bearer {temp_token}"},
     )
     assert resp.status_code == 400
 
