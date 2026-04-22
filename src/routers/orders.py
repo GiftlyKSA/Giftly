@@ -135,7 +135,7 @@ async def create_order(
         except Exception as e:
             await db.rollback()
             logging.error("Image upload failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Image upload failed. Please try again.")
+            raise HTTPException(status_code=500, detail="Something went wrong. Please contact administration.")
 
     db.add(OrderImage(order_id=new_order.id, **image_urls))
 
@@ -766,7 +766,7 @@ async def complete_order(
         # Return generic error message to user to avoid information disclosure
         raise HTTPException(
             status_code=500,
-            detail="An error occurred while completing the order. Please try again.",
+            detail="Something went wrong. Please contact administration.",
         )
 
 

@@ -276,7 +276,7 @@ async def send_message(
             media_url = upload_result["url"]
         except Exception as e:
             logging.error("Media upload failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Failed to upload media file. Please try again.")
+            raise HTTPException(status_code=500, detail="Something went wrong. Please contact administration.")
 
     # For invoice messages, ensure all invoice fields are provided
     if message_type == "invoice":

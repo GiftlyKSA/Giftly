@@ -1,3 +1,5 @@
+import logging
+
 from utils.auth.auth import get_current_user
 from utils.database.config import settings
 from utils.database.database import get_db
@@ -95,10 +97,10 @@ async def initiate_wallet_charge(
                 }
             )
     except Exception as e:
-        # Roll back the pending payment if gateway call fails
+        logging.error("Paylink wallet charge failed: %s", str(e))
         new_payment.status = PaymentStatus.FAILED
         await db.commit()
-        raise HTTPException(status_code=502, detail="Payment gateway error. Please try again.")
+        raise HTTPException(status_code=502, detail="Something went wrong. Please contact administration.")
 
     payment_url = response.get("url") or response.get("paymentUrl")
     transaction_id = response.get("transactionNo") or response.get("id")

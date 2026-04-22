@@ -1,7 +1,10 @@
+import logging
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,9 +26,25 @@ from models import (
 from models.enums import PaymentMethod as PaymentMethodEnum
 from schemas import CreatePayment, PaymentResponse
 from utils.auth.auth import get_current_user
+from utils.database.config import settings
 from utils.database.database import get_db
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Paylink callback rate limiting (per IP, in-memory)
+# ---------------------------------------------------------------------------
+
+_callback_timestamps: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_callback_rate_limit(client_ip: str) -> None:
+    now = time.monotonic()
+    window = 60.0
+    valid = [t for t in _callback_timestamps[client_ip] if now - t < window]
+    _callback_timestamps[client_ip] = valid
+    if len(valid) >= settings.paylink_callback_rate_limit_per_minute:
+        raise HTTPException(status_code=429, detail="Too many requests")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,9 +181,10 @@ async def create_payment(
                     }
                 )
         except Exception as e:
+            logging.error("Paylink create_order failed: %s", str(e))
             new_payment.status = PaymentStatus.FAILED
             await db.commit()
-            raise HTTPException(status_code=502, detail="Payment gateway error. Please try again.")
+            raise HTTPException(status_code=502, detail="Something went wrong. Please contact administration.")
 
         new_payment.transaction_id = str(
             resp.get("transactionNo") or resp.get("id") or ""
@@ -188,18 +208,27 @@ async def create_payment(
 @router.post("/paylink-callback")
 async def paylink_callback(
     payload: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Webhook endpoint called by Paylink after a payment completes.
     Verifies the transaction and marks the payment/invoice as paid.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    _check_callback_rate_limit(client_ip)
+
     transaction_no = str(
         payload.get("transactionNo") or payload.get("orderNumber") or ""
     )
     paylink_status = str(
         payload.get("orderStatus") or payload.get("status") or ""
     ).lower()
+
+    logging.info(
+        "paylink_callback received from %s — transaction=%s status=%s",
+        client_ip, transaction_no, paylink_status,
+    )
 
     if not transaction_no:
         raise HTTPException(status_code=400, detail="Missing transactionNo")
@@ -501,8 +530,8 @@ async def pay_with_wallet(
             from tasks.email_tasks import send_invoice_email_task
 
             await send_invoice_email_task.kiq(invoice.id)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error("Failed to enqueue invoice email for invoice %s: %s", invoice.id, str(e))
 
         return {
             "message": f"Payment successful{f'. Discount: {discount_amount / 100:.2f} SAR' if coupon_used else ''}",
@@ -513,7 +542,8 @@ async def pay_with_wallet(
         }
 
     except Exception as e:
+        logging.error("pay_with_wallet failed: %s", str(e))
         await db.rollback()
         raise HTTPException(
-            status_code=500, detail="Payment processing error. Please try again."
+            status_code=500, detail="Something went wrong. Please contact administration."
         )

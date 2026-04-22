@@ -353,8 +353,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 # Basic input sanitization to prevent injection attacks
                 if room and message_content and room.startswith("chat_"):
                     # Limit length, strip control characters, then HTML-escape to prevent XSS
-                    if len(message_content) > 1000:
-                        message_content = message_content[:1000] + "..."
+                    if len(message_content) > settings.chat_msg_max_chars:
+                        await websocket.send_json(
+                            {"error": f"Message too long (max {settings.chat_msg_max_chars} characters)"}
+                        )
+                        continue
                     message_content = "".join(
                         char
                         for char in message_content

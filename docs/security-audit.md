@@ -2,7 +2,7 @@
 
 > Last updated: 2026-04-22
 > Scope: `src/` — all routers, middleware, utils, models, schemas
-> Only unfixed findings are listed. 28 findings have been resolved and removed.
+> Only unfixed findings are listed.
 
 ---
 
@@ -70,15 +70,6 @@ if not secrets.compare_digest(user.otp or "", otp_data.otp or ""):
 
 ## MEDIUM
 
-### Courier locked out of invoice by DB ID endpoint
-**File:** `src/routers/invoices.py`
-
-`GET /invoices/id/{invoice_db_id}` only checks `Order.created_by_user_id == current_user.id`, locking out the assigned courier. The string-ID endpoint `/invoices/{invoice_id}` correctly allows both.
-
-**Fix:** Add `or_(Order.created_by_user_id == current_user.id, Order.assigned_to_user_id == current_user.id)` to the secondary endpoint's ownership filter.
-
----
-
 ### CORS defaults to wildcard with credentials
 **File:** `src/utils/database/config.py`, `src/main.py`
 
@@ -101,32 +92,21 @@ Actions like courier approval/rejection, admin wallet credits, and invoice modif
 ### Paylink webhook not logged with source IP
 **File:** `src/routers/payments.py`
 
-Successful and failed webhook deliveries are not logged with IP, timestamp, or payload hash, making post-fraud forensics impossible.
+Successful and failed webhook deliveries are not logged with payload hash, making post-fraud forensics incomplete. *(Source IP logging is done; payload hash is missing.)*
 
 **Fix:**
 ```python
-logging.info(
-    "paylink_callback received",
-    extra={"transaction_no": transaction_no, "status": paylink_status,
-           "client_ip": request.client.host if request.client else "unknown"}
-)
+import hashlib, json
+payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+logging.info("paylink_callback payload_hash=%s", payload_hash)
 ```
 
 ---
 
 ## LOW
 
-### No rate limit on `POST /payments/paylink-callback`
-The webhook endpoint is unauthenticated and rate-unlimited. A flood of garbage `transactionNo` values triggers a DB query per request.
-
-**Fix:** Add IP allowlisting for Paylink's server IP ranges, or add `slowapi` rate limiting on this endpoint.
-
----
-
 ### `is_verified` JWT claim can become stale
 If an admin revokes a user's verified status, their existing access token continues to claim `is_verified=True` until expiry. Acceptable for short-lived tokens; document as known risk.
-
-**Fix (optional):** Re-check `is_verified` from DB in `get_current_user` for sensitive endpoints, or reduce token lifetime.
 
 ---
 
@@ -158,28 +138,15 @@ from sqlalchemy.orm import declarative_base
 
 ---
 
-### No upper bound on `ACCESS_TOKEN_EXPIRE_MINUTES`
-**File:** `src/utils/database/config.py`
-
-A misconfigured value (e.g., 525600) makes tokens effectively non-expiring.
-
-**Fix:**
-```python
-from pydantic import Field
-access_token_expire_minutes: int = Field(default=15, ge=5, le=1440)
-```
-
----
-
 ### No alerting on repeated failed OTP attempts
-Failed OTP verifications are not logged at WARNING level. A brute-force attempt against a phone number is invisible.
+Failed OTP verifications are not logged at WARNING level. A brute-force attempt is invisible.
 
 **Fix:** `logging.warning("OTP verification failed for %s", normalized_phone)` with monitoring integration.
 
 ---
 
-### No rate limiting on public enumeration endpoints
-`GET /cities/`, `GET /couriers/available/{city_id}`, `GET /promocodes/active/list` have no rate limiting, allowing enumeration of users and couriers.
+### No rate limit on public enumeration endpoints
+`GET /cities/`, `GET /couriers/available/{city_id}`, `GET /promocodes/active/list` have no rate limiting.
 
 **Fix:** Add per-IP rate limiting via `slowapi` or Redis counters.
 
@@ -193,14 +160,11 @@ Failed OTP verifications are not logged at WARNING level. A brute-force attempt 
 | 2 | **HIGH** | Non-constant-time OTP comparison | `auth.py` |
 | 3 | **HIGH** | In-memory OTP rate limit (multi-worker) | `auth.py` |
 | 4 | **MEDIUM** | CORS wildcard with credentials | `main.py`, `config.py` |
-| 5 | **MEDIUM** | Courier locked out of invoice by DB ID | `invoices.py` |
-| 6 | **MEDIUM** | No audit log for sensitive admin actions | all routers |
-| 7 | **MEDIUM** | Webhook not logged with source IP | `payments.py` |
-| 8 | **LOW** | CSP `'unsafe-inline'` | `main.py` |
-| 9 | **LOW** | No dependency scanning | CI config |
-| 10 | **LOW** | `declarative_base()` deprecated | `database.py` |
-| 11 | **LOW** | No upper bound on token expiry config | `config.py` |
-| 12 | **LOW** | No alerting on failed OTP | `auth.py` |
-| 13 | **LOW** | No rate limit on enumeration endpoints | `cities.py`, `couriers.py` |
-| 14 | **LOW** | No rate limit on `/paylink-callback` | `payments.py` |
-| 15 | **LOW** | `is_verified` JWT claim can be stale | `auth.py` |
+| 5 | **MEDIUM** | No audit log for sensitive admin actions | all routers |
+| 6 | **MEDIUM** | Webhook payload hash not logged | `payments.py` |
+| 7 | **LOW** | CSP `'unsafe-inline'` | `main.py` |
+| 8 | **LOW** | No dependency scanning | CI config |
+| 9 | **LOW** | `declarative_base()` deprecated | `database.py` |
+| 10 | **LOW** | No alerting on failed OTP | `auth.py` |
+| 11 | **LOW** | No rate limit on enumeration endpoints | `cities.py`, `couriers.py` |
+| 12 | **LOW** | `is_verified` JWT claim can be stale | `auth.py` |

@@ -1,3 +1,4 @@
+import html
 import secrets
 from datetime import datetime, timezone
 from io import BytesIO
@@ -217,10 +218,13 @@ async def get_invoice_by_id(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    # Check if the invoice belongs to the current user (through the order)
     result = await db.execute(
         select(Order).where(
-            Order.id == invoice.order_id, Order.created_by_user_id == current_user.id
+            Order.id == invoice.order_id,
+            or_(
+                Order.created_by_user_id == current_user.id,
+                Order.assigned_to_user_id == current_user.id,
+            ),
         )
     )
     order = result.scalar_one_or_none()
@@ -434,8 +438,8 @@ async def get_invoice_by_order(
 
 @router.post("/verify-coupon")
 async def verify_coupon(
-    coupon_code: str = Form(...),
-    invoice_id: int = Form(...),
+    coupon_code: str = Form(..., max_length=50),
+    invoice_id: int = Form(..., ge=1),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -493,31 +497,27 @@ async def verify_coupon(
     if usage_check.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="You have already used this promocode")
 
-    # Calculate discount
+    # Calculate discount using integer arithmetic to avoid float precision issues
     discount_amount = 0
     if coupon.applicable_to == "order_total":
-        if coupon.percentage > 0:
-            discount_amount = invoice.full_amount * (coupon.percentage / 100)
-        if coupon.max_value > 0 and discount_amount > coupon.max_value:
-            discount_amount = coupon.max_value
+        base = invoice.full_amount
     elif coupon.applicable_to == "service_fee":
-        if coupon.percentage > 0:
-            discount_amount = invoice.service_fee * (coupon.percentage / 100)
-        if coupon.max_value > 0 and discount_amount > coupon.max_value:
-            discount_amount = coupon.max_value
+        base = invoice.service_fee
     elif coupon.applicable_to == "delivery_fee":
-        if coupon.percentage > 0:
-            discount_amount = invoice.courier_fee * (coupon.percentage / 100)
-        if coupon.max_value > 0 and discount_amount > coupon.max_value:
-            discount_amount = coupon.max_value
+        base = invoice.courier_fee
+    else:
+        base = 0
 
-    final_amount = invoice.full_amount - discount_amount
-    if final_amount < 0:
-        final_amount = 0
+    if coupon.percentage > 0:
+        discount_amount = int(base * coupon.percentage / 100)
+    if coupon.max_value > 0 and discount_amount > coupon.max_value:
+        discount_amount = coupon.max_value
+
+    final_amount = max(0, invoice.full_amount - discount_amount)
 
     return {
         "coupon_id": coupon.id,
         "discount_amount": discount_amount,
         "final_amount": final_amount,
-        "description": coupon.description or f"{coupon.percentage}% discount",
+        "description": html.escape(coupon.description or f"{coupon.percentage}% discount"),
     }

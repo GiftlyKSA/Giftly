@@ -3,7 +3,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from models.enums import InvoiceStatus as InvoiceStatusEnum
 from models.enums import OrderStatus as OrderStatusEnum
@@ -147,8 +147,8 @@ class CreateInvoice(BaseModel):
     service_fee: Optional[float] = 0.0
     order_only_price: float
     courier_fee: Optional[float] = 0.0
-    description: Optional[str] = None
-    comment: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=1000)
+    comment: Optional[str] = Field(None, max_length=1000)
     due_date: Optional[datetime] = None
     tax_amount: Optional[float] = 0.0
     discount_amount: Optional[float] = 0.0
@@ -172,7 +172,7 @@ class CreateInvoice(BaseModel):
 
 
 class CancelOrderRequest(BaseModel):
-    reason: str
+    reason: str = Field(..., min_length=1, max_length=500)
 
 
 class AssignOrderRequest(BaseModel):
@@ -350,8 +350,8 @@ class UpdatePromocode(BaseModel):
 
 
 class ApplyPromocodeRequest(BaseModel):
-    code: str
-    order_total: int
+    code: str = Field(..., min_length=1, max_length=50)
+    order_total: int = Field(..., ge=1)
 
 
 # Important Events schemas

@@ -1,14 +1,15 @@
 import os
 import re
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     secret_key: str
     database_url: str
-    access_token_expire_minutes: int
-    refresh_token_expire_days: int
+    access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
+    refresh_token_expire_days: int = Field(default=60, ge=1, le=365)
     aws_access_key_id: str
     aws_secret_access_key: str
     aws_s3_bucket_name: str
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     paylink_test_mode: bool = True
     paylink_callback_url: str = ""
     paylink_return_url: str = ""
+    paylink_callback_rate_limit_per_minute: int = 10
 
     # Email provider: smtp | sender_net | sendgrid | mailgun
     email_provider: str = "smtp"
@@ -86,8 +88,6 @@ class Settings(BaseSettings):
         required_env_vars = [
             "secret_key",
             "database_url",
-            "access_token_expire_minutes",
-            "refresh_token_expire_days",
             "aws_access_key_id",
             "aws_secret_access_key",
             "aws_s3_bucket_name",

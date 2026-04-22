@@ -5,7 +5,7 @@ from utils.database.config import settings
 from utils.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
@@ -177,15 +177,12 @@ async def cleanup_soft_deleted(
 
     for label, Model in _SOFT_DELETE_MODELS:
         result = await db.execute(
-            select(Model).where(
+            delete(Model).where(
                 Model.deleted_at.isnot(None),
                 Model.deleted_at < cutoff,
             )
         )
-        records = result.scalars().all()
-        for record in records:
-            await db.delete(record)
-        deleted[label] = len(records)
+        deleted[label] = result.rowcount
 
     await db.commit()
     return {"deleted": deleted, "cutoff_date": cutoff.isoformat()}

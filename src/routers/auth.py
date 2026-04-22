@@ -1,3 +1,4 @@
+import logging
 import re
 import time
 from collections import defaultdict
@@ -406,8 +407,8 @@ async def complete_profile(
         from tasks.email_tasks import send_welcome_email_task
 
         await send_welcome_email_task.kiq(user.id)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error("Failed to enqueue welcome email for user %s: %s", user.id, str(e))
 
     return {
         "access_token": access_token,
