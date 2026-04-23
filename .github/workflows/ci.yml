@@ -25,6 +25,9 @@ jobs:
     - name: Install dependencies
       run: uv sync --frozen --all-extras --dev
 
+    - name: Dependency vulnerability scan
+      run: uv run pip-audit --strict
+
     - name: Set up test environment
       run: |
         cp .env.example .env.test

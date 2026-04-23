@@ -1,4 +1,5 @@
 from .admin.admin import Admin
+from .audit_log import AuditLog
 from .city import City
 from .conversation import Conversation
 from .courier.courier_profile import CourierProfile
@@ -29,6 +30,7 @@ from .wallet import Wallet
 
 __all__ = [
     "Admin",
+    "AuditLog",
     "CourierBalanceAddition",
     "CourierProfile",
     "CustomerProfile",

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
     Admin,
+    AuditLog,
     Conversation,
     CourierProfile,
     CourierReview,
@@ -25,6 +26,25 @@ from models import (
 
 router = APIRouter()
 security = HTTPBasic()
+
+
+async def _audit(
+    db: AsyncSession,
+    admin_id: int,
+    action: str,
+    target_type: str = None,
+    target_id: str = None,
+    detail: str = None,
+    ip_address: str = None,
+) -> None:
+    db.add(AuditLog(
+        admin_id=admin_id,
+        action=action,
+        target_type=target_type,
+        target_id=str(target_id) if target_id is not None else None,
+        detail=detail,
+        ip_address=ip_address,
+    ))
 
 
 class AdminChargeWalletRequest(BaseModel):
@@ -90,6 +110,7 @@ async def approve_courier(
         raise HTTPException(status_code=404, detail="Courier profile not found")
 
     profile.is_approved = True
+    await _audit(db, current_admin.id, "courier.approve", "courier", user_id)
     await db.commit()
     return {"message": "Courier approved", "user_id": user_id}
 
@@ -109,6 +130,7 @@ async def reject_courier(
         raise HTTPException(status_code=404, detail="Courier profile not found")
 
     profile.is_approved = False
+    await _audit(db, current_admin.id, "courier.reject", "courier", user_id)
     await db.commit()
     return {"message": "Courier rejected", "user_id": user_id}
 
@@ -145,6 +167,11 @@ async def admin_charge_wallet(
         "Admin wallet charge: admin=%s user=%s amount=%d balance_before=%d balance_after=%d",
         current_admin.id, user_id, amount, balance_before, wallet.balance,
     )
+    await _audit(
+        db, current_admin.id, "wallet.charge", "wallet", user_id,
+        detail=f"amount={amount} balance_before={balance_before} balance_after={wallet.balance}",
+    )
+    await db.commit()
 
     return {
         "message": f"Charged {amount} halaym to user {user_id}",

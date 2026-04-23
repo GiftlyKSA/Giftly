@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from utils.admin.admin import (
     AdminAdmin,
+    AuditLogAdmin,
     CityAdmin,
     ConversationAdmin,
     CourierReviewAdmin,
@@ -230,6 +231,7 @@ sqladmin.add_view(PromocodeAdmin)
 sqladmin.add_view(ConversationAdmin)
 sqladmin.add_view(MessageAdmin)
 sqladmin.add_view(CourierReviewAdmin)
+sqladmin.add_view(AuditLogAdmin)
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +254,8 @@ async def health_check():
 # ---------------------------------------------------------------------------
 
 
-async def get_user_from_token(token: str) -> User:
-    """Extract user from JWT token for WebSocket authentication (stateless)."""
+async def get_user_from_token(token: str, db) -> User:
+    """Validate JWT then fetch fresh user state from DB (avoids stale claims)."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -272,13 +274,16 @@ async def get_user_from_token(token: str) -> User:
     except (JWTError, ValueError):
         raise credentials_exception
 
-    return User(
-        id=user_id,
-        phone_number=payload.get("phone_number"),
-        role=payload.get("role"),
-        name=payload.get("name"),
-        is_verified=payload.get("is_verified", False),
+    from sqlalchemy.orm import selectinload as _sil
+    result = await db.execute(
+        select(User)
+        .options(_sil(User.courier_profile))
+        .where(User.id == user_id)
     )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -295,12 +300,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
     db = AsyncSessionLocal()
     user = None
     try:
-        user = await get_user_from_token(token)
+        user = await get_user_from_token(token, db)
         await manager.connect(websocket, user.id)
         await manager.join_room(user.id, f"user_{user.id}")
 
         # Courier room join: only approved + available couriers
-        if user.role == UserRole.COURIER.value:
+        if user.role == UserRole.COURIER:
             profile_record = await db.execute(
                 select(CourierProfile).where(CourierProfile.user_id == user.id)
             )

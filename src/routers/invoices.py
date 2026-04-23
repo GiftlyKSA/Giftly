@@ -22,64 +22,6 @@ from utils.database.database import get_db
 router = APIRouter()
 
 
-@router.post("/", response_model=InvoiceResponse)
-async def create_invoice(
-    invoice_data: CreateInvoice,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new invoice for an order. Assigned courier only."""
-    if current_user.role != UserRole.COURIER:
-        raise HTTPException(status_code=403, detail="Only couriers can create invoices")
-
-    result = await db.execute(select(Order).where(Order.id == invoice_data.order_id))
-    order = result.scalar_one_or_none()
-    if not order:
-        raise HTTPException(status_code=400, detail="Order not found")
-
-    if order.assigned_to_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Order is not assigned to you")
-
-    result = await db.execute(
-        select(Invoice).where(Invoice.order_id == invoice_data.order_id)
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Invoice already exists for this order")
-
-    invoice_id = f"INV-{secrets.token_hex(6).upper()}"
-
-    new_invoice = Invoice(
-        invoice_id=invoice_id,
-        order_id=invoice_data.order_id,
-        full_amount=invoice_data.full_amount,
-        service_fee=invoice_data.service_fee,
-        order_only_price=invoice_data.order_only_price,
-        courier_fee=invoice_data.courier_fee,
-        description=invoice_data.description,
-        comment=invoice_data.comment,
-        due_date=invoice_data.due_date,
-        tax_amount=invoice_data.tax_amount,
-        discount_amount=invoice_data.discount_amount,
-        status=InvoiceStatus.NEW,
-        created_by_user_id=current_user.id,
-    )
-
-    db.add(new_invoice)
-    order.status = OrderStatus.INVOICE_CREATED
-    await db.commit()
-    await db.refresh(new_invoice)
-
-    from utils.websocket.websocket_events import (
-        emit_invoice_requires_approval,
-        emit_order_status_change,
-    )
-
-    await emit_order_status_change(order.id, OrderStatus.INVOICE_CREATED.value)
-    await emit_invoice_requires_approval(new_invoice.id, order.id)
-
-    return new_invoice
-
-
 @router.post("/courier/create", response_model=InvoiceResponse)
 async def create_invoice_by_courier(
     invoice_data: CreateInvoice,
@@ -126,11 +68,16 @@ async def create_invoice_by_courier(
     )
 
     db.add(new_invoice)
+    order.status = OrderStatus.INVOICE_CREATED
     await db.commit()
     await db.refresh(new_invoice)
 
-    from utils.websocket.websocket_events import emit_invoice_requires_approval
+    from utils.websocket.websocket_events import (
+        emit_invoice_requires_approval,
+        emit_order_status_change,
+    )
 
+    await emit_order_status_change(order.id, OrderStatus.INVOICE_CREATED.value)
     await emit_invoice_requires_approval(new_invoice.id, order.id)
 
     return new_invoice

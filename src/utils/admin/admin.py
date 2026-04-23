@@ -8,6 +8,7 @@ from wtforms import DateField
 
 from models import (
     Admin,
+    AuditLog,
     City,
     Conversation,
     CourierReview,
@@ -273,6 +274,24 @@ class CourierReviewAdmin(ModelView, model=CourierReview):
             5: "5 Stars",
         }
     }
+
+
+class AuditLogAdmin(ModelView, model=AuditLog):
+    can_create = False
+    can_edit = False
+    can_delete = False
+    column_list = [
+        AuditLog.id,
+        AuditLog.admin_id,
+        AuditLog.action,
+        AuditLog.target_type,
+        AuditLog.target_id,
+        AuditLog.detail,
+        AuditLog.ip_address,
+        AuditLog.created_at,
+    ]
+    column_searchable_list = [AuditLog.action, AuditLog.target_type, AuditLog.target_id]
+    column_default_sort = (AuditLog.created_at, True)
 
 
 def authenticate_admin_request(request: Request) -> bool:
