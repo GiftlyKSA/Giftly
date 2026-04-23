@@ -27,8 +27,9 @@ from utils.database.database import get_db
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
-# In-process rate limiting for send-otp and verify-otp (per phone number)
-# For multi-server deployments replace with Redis-backed counters.
+# Rate limiting for send-otp and verify-otp (per phone number)
+# Uses Redis INCR+EXPIRE when Redis is available (multi-worker safe).
+# Falls back to in-memory sliding window in dev/test.
 # ---------------------------------------------------------------------------
 _PHONE_WINDOW = settings.rate_limit_otp_window_seconds
 _PHONE_MAX = settings.rate_limit_otp_max
@@ -37,32 +38,46 @@ _phone_timestamps: dict[str, list[float]] = defaultdict(list)
 _verify_timestamps: dict[str, list[float]] = defaultdict(list)
 
 
-def _check_phone_rate_limit(phone: str) -> None:
-    now = time.monotonic()
-    # Evict old entries
-    _phone_timestamps[phone] = [
-        t for t in _phone_timestamps[phone] if now - t < _PHONE_WINDOW
-    ]
-    if len(_phone_timestamps[phone]) >= _PHONE_MAX:
+async def _check_phone_rate_limit(phone: str) -> None:
+    from utils.redis_client import get_redis, redis_rate_check
+    key = f"rl:otp:send:{phone}"
+    if await redis_rate_check(key, _PHONE_MAX, _PHONE_WINDOW):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many OTP requests for this number. Try again in 10 minutes.",
         )
-    _phone_timestamps[phone].append(now)
+    if get_redis() is None:
+        now = time.monotonic()
+        _phone_timestamps[phone] = [
+            t for t in _phone_timestamps[phone] if now - t < _PHONE_WINDOW
+        ]
+        if len(_phone_timestamps[phone]) >= _PHONE_MAX:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many OTP requests for this number. Try again in 10 minutes.",
+            )
+        _phone_timestamps[phone].append(now)
 
 
-def _check_phone_verify_rate_limit(phone: str) -> None:
-    now = time.monotonic()
-    # Evict old entries
-    _verify_timestamps[phone] = [
-        t for t in _verify_timestamps[phone] if now - t < _PHONE_WINDOW
-    ]
-    if len(_verify_timestamps[phone]) >= _PHONE_MAX:
+async def _check_phone_verify_rate_limit(phone: str) -> None:
+    from utils.redis_client import get_redis, redis_rate_check
+    key = f"rl:otp:verify:{phone}"
+    if await redis_rate_check(key, _PHONE_MAX, _PHONE_WINDOW):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many OTP verification attempts for this number. Try again in 10 minutes.",
         )
-    _verify_timestamps[phone].append(now)
+    if get_redis() is None:
+        now = time.monotonic()
+        _verify_timestamps[phone] = [
+            t for t in _verify_timestamps[phone] if now - t < _PHONE_WINDOW
+        ]
+        if len(_verify_timestamps[phone]) >= _PHONE_MAX:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many OTP verification attempts for this number. Try again in 10 minutes.",
+            )
+        _verify_timestamps[phone].append(now)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +93,7 @@ async def send_otp(
     phone_number = re.sub(r"^(\+966|0)+", "", otp_request.phone_number)
 
     # Per-phone rate limit (3 requests / 10 min)
-    _check_phone_rate_limit(phone_number)
+    await _check_phone_rate_limit(phone_number)
 
     user = await get_user_by_phone(db, phone_number)
 
@@ -109,7 +124,7 @@ async def send_otp(
 async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
     # Normalize phone before rate limit to prevent bypass via format variations
     normalized_phone = re.sub(r"^(\+966|0)+", "", otp_data.phone_number)
-    _check_phone_verify_rate_limit(normalized_phone)
+    await _check_phone_verify_rate_limit(normalized_phone)
     user = await get_user_by_phone(db, otp_data.phone_number)
     if not user:
         raise HTTPException(status_code=400, detail="User not found")

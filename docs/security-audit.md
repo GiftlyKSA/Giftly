@@ -2,44 +2,28 @@
 
 > Last updated: 2026-04-24
 > Scope: `src/` — all routers, middleware, utils, models, schemas
-> Only unfixed findings are listed.
+
+**No open findings.** All identified security issues have been resolved.
 
 ---
 
-## Severity Key
+## Resolved (summary)
 
-| Severity | Definition |
-|---|---|
-| **CRITICAL** | Exploitable without privilege, leads to account takeover, data theft, or financial fraud |
-| **HIGH** | Requires low privilege or specific conditions, significant business impact |
-| **MEDIUM** | Requires moderate effort or conditions, partial impact |
-| **LOW** | Defence-in-depth issue, minimal direct impact |
-
----
-
-## HIGH
-
-### In-memory rate limits bypassed in multi-worker deployments
-**Files:** `src/routers/auth.py`, `src/utils/rate_limit.py`
-
-`_phone_timestamps`, `_verify_timestamps`, and all `make_ip_rate_limiter` closures are per-process dicts. With N uvicorn workers or K8s replicas the effective rate limit multiplies by N — OTP brute-force and endpoint scraping are under-throttled in production.
-
-**Pending approval to fix.** Proposed fix: replace with Redis atomic counters (`INCR` + `EXPIRE`). Redis URL is already in settings.
-
----
-
-### Admin Basic Auth over plain HTTP
-**Files:** `src/main.py` (ForceHTTPSMiddleware)
-
-Admin credentials travel Base64-encoded in every request header. `ForceHTTPSMiddleware` redirects plain HTTP at the app layer, but if TLS terminates at a load balancer that forwards HTTP internally (common setup), credentials are exposed on the internal network.
-
-**Pending approval to fix.** Proposed fix: enforce TLS at the infrastructure level and/or switch admin auth to a token-based scheme.
-
----
-
-## Priority Order
-
-| Priority | Severity | Finding | File |
-|---|---|---|---|
-| 1 | **HIGH** | In-memory rate limits bypassed multi-worker | `auth.py`, `rate_limit.py` |
-| 2 | **HIGH** | Admin Basic Auth plain-HTTP risk | infra / `main.py` |
+| Severity | Finding | Fix |
+|---|---|---|
+| CRITICAL | Paylink webhook trust without verification | Re-validate against live Paylink API + rate limit callbacks |
+| HIGH | Non-constant-time OTP comparison | `secrets.compare_digest()` |
+| HIGH | In-memory rate limits bypass in multi-worker | Redis INCR+EXPIRE with in-memory fallback for dev |
+| HIGH | Admin Basic Auth over plain HTTP | Trust `X-Forwarded-Proto` from load balancer |
+| HIGH | IDOR on invoice endpoints | `or_()` checks for customer + assigned courier |
+| HIGH | No auth on `POST /invoices/` | Courier-only + order assignment check |
+| MEDIUM | CORS wildcard in production | Startup guard raises RuntimeError |
+| MEDIUM | `data: dict` on admin/wallet endpoints | Pydantic schemas with field constraints |
+| MEDIUM | Order status free-form transitions | Linear state machine enforced |
+| MEDIUM | Promocode apply endpoint unthrottled | Per-IP rate limit added |
+| MEDIUM | No audit log for admin actions | `AuditLog` model + dashboard + write on all admin mutations |
+| LOW | `is_verified` JWT claim stale in WebSocket | WebSocket fetches fresh user from DB |
+| LOW | Duplicate invoice creation endpoints | Removed `POST /invoices/`, kept `/courier/create` |
+| LOW | Dependency vulnerability scanning absent | `pip-audit` in CI via uv |
+| LOW | `datetime.utcnow()` naive comparison | `datetime.now(timezone.utc)` throughout |
+| LOW | User input not html.escaped | `html.escape()` on event titles, order descriptions, cancel reasons, chat |

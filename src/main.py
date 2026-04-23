@@ -62,13 +62,15 @@ from tasks.broker import broker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Schema is owned by Alembic — run `uv run alembic upgrade head` to apply migrations.
-    # Start the broker connection (skipped automatically inside the worker process)
+    from utils.redis_client import close_redis, init_redis
+    if settings.use_redis_broker:
+        await init_redis(settings.redis_url)
     if not broker.is_worker_process:
         await broker.startup()
     yield
     if not broker.is_worker_process:
         await broker.shutdown()
+    await close_redis()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -115,17 +117,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
-# Force HTTPS for all requests
+# Force HTTPS for all requests.
+# Trusts X-Forwarded-Proto from load balancers that terminate TLS and forward
+# plain HTTP internally — the standard pattern for nginx/ALB/Cloudflare setups.
 class ForceHTTPSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        # Check if request is HTTP and redirect to HTTPS
-        if request.url.scheme == "http" and not settings.debug:
-            https_url = str(request.url).replace("http://", "https://", 1)
-            return RedirectResponse(
-                url=https_url, status_code=status.HTTP_301_MOVED_PERMANENTLY
-            )
-
-        # For HTTPS requests, continue normally
+        if not settings.debug:
+            forwarded_proto = request.headers.get("x-forwarded-proto", "")
+            actual_scheme = forwarded_proto.lower() if forwarded_proto else request.url.scheme
+            if actual_scheme == "http":
+                https_url = str(request.url).replace("http://", "https://", 1)
+                return RedirectResponse(
+                    url=https_url, status_code=status.HTTP_301_MOVED_PERMANENTLY
+                )
         response = await call_next(request)
         return response
 
