@@ -133,31 +133,6 @@ async def update_invoice_by_courier(
     return invoice
 
 
-@router.get("/{invoice_id}", response_model=InvoiceResponse)
-async def get_invoice(
-    invoice_id: str,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get invoice by invoice_id. Only the customer who placed the order or the assigned courier can view it."""
-    result = await db.execute(
-        select(Invoice)
-        .join(Order, Invoice.order_id == Order.id)
-        .where(
-            Invoice.invoice_id == invoice_id,
-            or_(
-                Order.created_by_user_id == current_user.id,
-                Order.assigned_to_user_id == current_user.id,
-            ),
-        )
-    )
-    invoice = result.scalar_one_or_none()
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-
-    return invoice
-
-
 @router.get("/id/{invoice_db_id}", response_model=InvoiceResponse)
 async def get_invoice_by_id(
     invoice_db_id: int,
@@ -486,3 +461,29 @@ async def verify_coupon(
         "final_amount": final_amount,
         "description": html.escape(coupon.description or f"{coupon.percentage}% discount"),
     }
+
+
+# Wildcard route — must be LAST so fixed-segment paths (/id/, /order/, /courier/) match first
+@router.get("/{invoice_id}", response_model=InvoiceResponse)
+async def get_invoice(
+    invoice_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get invoice by invoice_id string (e.g. INV-XXXXXX). Customer or assigned courier only."""
+    result = await db.execute(
+        select(Invoice)
+        .join(Order, Invoice.order_id == Order.id)
+        .where(
+            Invoice.invoice_id == invoice_id,
+            or_(
+                Order.created_by_user_id == current_user.id,
+                Order.assigned_to_user_id == current_user.id,
+            ),
+        )
+    )
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return invoice

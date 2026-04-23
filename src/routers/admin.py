@@ -197,27 +197,42 @@ _SOFT_DELETE_MODELS = [
 @router.post("/cleanup/soft-deleted")
 async def cleanup_soft_deleted(
     retention_days: int = 90,
+    dry_run: bool = False,
     current_admin: Admin = Depends(authenticate_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Hard-delete soft-deleted records older than `retention_days` days.
-    Returns count of deleted rows per model.
+    Pass `dry_run=true` to preview counts without deleting anything.
     """
     if retention_days < 1:
         raise HTTPException(status_code=400, detail="retention_days must be >= 1")
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    deleted: dict[str, int] = {}
+    counts: dict[str, int] = {}
 
     for label, Model in _SOFT_DELETE_MODELS:
-        result = await db.execute(
-            delete(Model).where(
-                Model.deleted_at.isnot(None),
-                Model.deleted_at < cutoff,
+        if dry_run:
+            from sqlalchemy import func as _func
+            count_result = await db.execute(
+                select(_func.count()).select_from(Model).where(
+                    Model.deleted_at.isnot(None),
+                    Model.deleted_at < cutoff,
+                )
             )
-        )
-        deleted[label] = result.rowcount
+            counts[label] = count_result.scalar() or 0
+        else:
+            result = await db.execute(
+                delete(Model).where(
+                    Model.deleted_at.isnot(None),
+                    Model.deleted_at < cutoff,
+                )
+            )
+            counts[label] = result.rowcount
 
-    await db.commit()
-    return {"deleted": deleted, "cutoff_date": cutoff.isoformat()}
+    if not dry_run:
+        await db.commit()
+        await _audit(db, current_admin.id, "cleanup.soft_deleted", detail=f"retention_days={retention_days} cutoff={cutoff.isoformat()}")
+        await db.commit()
+
+    return {"dry_run": dry_run, "counts": counts, "cutoff_date": cutoff.isoformat()}

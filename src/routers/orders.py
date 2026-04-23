@@ -377,6 +377,15 @@ async def assign_order(
     if assigned_user.role != UserRole.COURIER:
         raise HTTPException(status_code=400, detail="Assigned user must be a courier")
 
+    courier_profile = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == request.assigned_to_user_id)
+    )
+    courier_profile = courier_profile.scalar_one_or_none()
+    if not courier_profile:
+        raise HTTPException(status_code=400, detail="Courier profile not found")
+    if courier_profile.city_id != order.city_id:
+        raise HTTPException(status_code=400, detail="Courier is not in the same city as the order")
+
     if order.status in [OrderStatus.CANCELLED, OrderStatus.DONE]:
         raise HTTPException(status_code=400, detail="Order cannot be assigned")
 
@@ -451,6 +460,21 @@ async def accept_order(
         raise HTTPException(status_code=403, detail="Your account is not yet approved")
     if not profile.is_available:
         raise HTTPException(status_code=403, detail="You are currently marked as unavailable")
+
+    # Enforce max concurrent order cap
+    from sqlalchemy import func as _func
+    active_count_result = await db.execute(
+        select(_func.count()).select_from(Order).where(
+            Order.assigned_to_user_id == current_user.id,
+            Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE]),
+        )
+    )
+    active_count = active_count_result.scalar()
+    if active_count >= profile.max_concurrent_orders:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You have reached your maximum of {profile.max_concurrent_orders} active orders",
+        )
 
     # Load order for pre-claim validation (non-locking read)
     result = await db.execute(

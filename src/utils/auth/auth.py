@@ -129,10 +129,15 @@ async def get_current_user(
     except (JWTError, ValueError):
         raise credentials_exception
 
+    role = payload.get("role", "")
+    profile_opts = []
+    if role == UserRole.COURIER.value:
+        profile_opts.append(selectinload(User.courier_profile))
+    elif role == UserRole.CUSTOMER.value:
+        profile_opts.append(selectinload(User.customer_profile))
+
     result = await db.execute(
-        select(User)
-        .options(selectinload(User.courier_profile), selectinload(User.customer_profile))
-        .where(User.id == user_id)
+        select(User).options(*profile_opts).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if user is None:

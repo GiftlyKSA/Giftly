@@ -250,6 +250,15 @@ def read_root():
 
 @app.get("/health")
 async def health_check():
+    from sqlalchemy import text as _text
+    from utils.database.database import AsyncSessionLocal as _Session
+    try:
+        async with _Session() as db:
+            await db.execute(_text("SELECT 1"))
+    except Exception as e:
+        logging.error("Health check DB probe failed: %s", e)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "detail": "database unavailable"})
     return {"status": "ok"}
 
 
