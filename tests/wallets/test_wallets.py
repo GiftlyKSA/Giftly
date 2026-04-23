@@ -11,6 +11,8 @@ Covers:
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 pytestmark = pytest.mark.asyncio
 
@@ -71,7 +73,13 @@ async def test_initiate_charge_requires_auth(client):
 # ---------------------------------------------------------------------------
 
 
-async def test_request_deposit_by_courier(client, courier_headers, courier):
+async def test_request_deposit_by_courier(client, courier_headers, courier, db: AsyncSession):
+    from models import Wallet
+    result = await db.execute(select(Wallet).where(Wallet.user_id == courier.id))
+    wallet = result.scalar_one_or_none()
+    wallet.balance = 10_000  # 100 SAR
+    await db.commit()
+
     resp = await client.post(
         "/wallets/request-deposit",
         json={"amount": 50},

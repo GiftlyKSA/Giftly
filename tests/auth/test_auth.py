@@ -310,4 +310,4 @@ async def test_update_push_token_empty_rejected(client, customer_headers):
     resp = await client.put(
         "/auth/push-token", json={"push_token": ""}, headers=customer_headers
     )
-    assert resp.status_code == 400
+    assert resp.status_code in (400, 422)

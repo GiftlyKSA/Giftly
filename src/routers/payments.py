@@ -30,6 +30,7 @@ from schemas import CreatePayment, PaymentResponse
 from utils.auth.auth import get_current_user
 from utils.database.config import settings
 from utils.database.database import get_db
+from utils.rate_limit import make_ip_rate_limiter
 
 router = APIRouter()
 
@@ -38,6 +39,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 _callback_timestamps: dict[str, list[float]] = defaultdict(list)
+_payment_rate_limit = make_ip_rate_limiter(20, 60)
 
 
 def _check_callback_rate_limit(client_ip: str) -> None:
@@ -115,6 +117,7 @@ async def create_payment(
     payment_data: CreatePayment,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(_payment_rate_limit),
 ):
     """
     Create a payment record.
@@ -256,7 +259,14 @@ async def paylink_callback(
         try:
             pid = int(transaction_no)
             result = await db.execute(
-                select(Payment).where(
+                select(Payment)
+                .options(
+                    selectinload(Payment.invoice)
+                    .selectinload(Invoice.order)
+                    .selectinload(Order.conversation),
+                    selectinload(Payment.user),
+                )
+                .where(
                     Payment.id == pid, Payment.status == PaymentStatus.PENDING
                 )
             )
@@ -388,7 +398,10 @@ async def get_payments_by_invoice(
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.order.created_by_user_id != current_user.id:
+    if (
+        invoice.order.created_by_user_id != current_user.id
+        and invoice.order.assigned_to_user_id != current_user.id
+    ):
         raise HTTPException(status_code=403, detail="Access denied")
 
     result = await db.execute(

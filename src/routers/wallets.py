@@ -18,8 +18,11 @@ from models import (
 from models.enums import UserRole
 from schemas import InitiateWalletChargeRequest, RequestWalletDeposit, WalletResponse
 from utils.clients.paylink import PaylinkClient
+from utils.rate_limit import make_ip_rate_limiter
 
 router = APIRouter()
+
+_charge_rate_limit = make_ip_rate_limiter(5, 60)
 
 
 @router.get("/my-wallet", response_model=WalletResponse)
@@ -38,6 +41,7 @@ async def initiate_wallet_charge(
     data: InitiateWalletChargeRequest,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(_charge_rate_limit),
 ):
     """
     Initiate a wallet top-up via Paylink.sa.
@@ -133,7 +137,10 @@ async def request_wallet_deposit(
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
 
-    amount_in_halaym = int(request.amount * 100)
+    amount_in_halaym = int(round(request.amount * 100))
+
+    if amount_in_halaym > wallet.balance:
+        raise HTTPException(status_code=400, detail="Insufficient wallet balance to request this deposit amount")
 
     deposit_request = DepositRequest(
         courier_id=current_user.id,

@@ -195,7 +195,7 @@ def generate_invoice_pdf(invoice: InvoiceResponse, order: Order = None) -> Bytes
     content.append(Spacer(1, 12))
 
     # Invoice details
-    status_text = "Paid" if invoice.status == "paid" else "Unpaid"
+    status_text = "Paid" if invoice.status == InvoiceStatus.PAID else "Unpaid"
     invoice_data = [
         ["Invoice Number:", invoice.invoice_id],
         ["Invoice Date:", invoice.created_at.strftime("%Y-%m-%d %H:%M")],
@@ -403,7 +403,7 @@ async def verify_coupon(
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Check if invoice is already paid
-    if invoice.status == "paid":
+    if invoice.status == InvoiceStatus.PAID:
         raise HTTPException(status_code=400, detail="Invoice is already paid")
 
     # Find the coupon

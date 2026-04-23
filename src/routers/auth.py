@@ -11,7 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import CourierProfile, CustomerProfile, User, Wallet
 from models.enums import UserRole
-from schemas import OTPVerify, RefreshTokenRequest, SendOTP, Token, UpdateUserProfile
+from schemas import (
+    CompleteProfileRequest,
+    OTPVerify,
+    RefreshTokenRequest,
+    SendOTP,
+    Token,
+    UpdatePushTokenRequest,
+    UpdateTimezoneRequest,
+    UpdateUserProfile,
+)
 from utils.auth.auth import (
     create_access_token,
     create_tokens,
@@ -368,30 +377,28 @@ async def refresh_access_token(
 
 @router.post("/complete-profile", response_model=Token)
 async def complete_profile(
-    profile_data: dict,
+    profile_data: CompleteProfileRequest,
     current_user: User = Depends(get_profile_user),
     db: AsyncSession = Depends(get_db),
 ):
     phone_number = current_user.phone_number  # always use authenticated user's phone
-    name = profile_data.get("name")
-    email = profile_data.get("email")
-    date_of_birth_str = profile_data.get("date_of_birth")
-    timezone_val = profile_data.get("timezone")
-    role_str = profile_data.get("role", "Customer")
+    name = profile_data.name
+    email = profile_data.email
+    timezone_val = profile_data.timezone
     try:
-        role = UserRole(role_str)
+        role = UserRole(profile_data.role)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid role")
 
-    if not all([phone_number, name, email, date_of_birth_str]):
+    try:
+        date_of_birth = datetime.fromisoformat(profile_data.date_of_birth).date()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    if not all([phone_number, name, email]):
         raise HTTPException(
             status_code=400, detail="Name, email, and date of birth are required"
         )
-
-    try:
-        date_of_birth = datetime.fromisoformat(date_of_birth_str).date()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format")
 
     user = current_user
     if user.is_verified:
@@ -437,13 +444,11 @@ async def complete_profile(
 
 @router.put("/timezone", response_model=dict)
 async def update_timezone(
-    timezone_data: dict,
+    timezone_data: UpdateTimezoneRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    new_timezone = timezone_data.get("timezone")
-    if not new_timezone:
-        raise HTTPException(status_code=400, detail="Timezone is required")
+    new_timezone = timezone_data.timezone
 
     current_tz = (
         current_user.customer_profile.timezone
@@ -473,16 +478,12 @@ async def update_timezone(
 
 @router.put("/push-token", response_model=dict)
 async def update_push_token(
-    data: dict,
+    data: UpdatePushTokenRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Store FCM / APNs push token for the current user's device."""
-    push_token = data.get("push_token", "").strip()
-    if not push_token:
-        raise HTTPException(status_code=400, detail="push_token is required")
-    if len(push_token) > 300:
-        raise HTTPException(status_code=400, detail="Invalid push token")
+    push_token = data.push_token
 
     if current_user.role == UserRole.CUSTOMER:
         if current_user.customer_profile:

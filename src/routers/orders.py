@@ -50,6 +50,13 @@ from utils.websocket.websocket_events import emit_order_status_change
 
 router = APIRouter()
 
+_COURIER_TRANSITIONS: dict[OrderStatus, OrderStatus | None] = {
+    OrderStatus.RECEIVED_BY_COURIER: OrderStatus.IN_PROGRESS_TO_DO,
+    OrderStatus.IN_PROGRESS_TO_DO: OrderStatus.OUT_FOR_DELIVERY,
+    OrderStatus.OUT_FOR_DELIVERY: OrderStatus.AWAITING_CONFIRMATION,
+    OrderStatus.AWAITING_CONFIRMATION: None,
+}
+
 
 @router.post("/", response_model=OrderResponse)
 async def create_order(
@@ -593,10 +600,11 @@ async def confirm_delivery(
             detail="Only the customer who placed this order can confirm delivery",
         )
 
-    if order.status == OrderStatus.DONE:
-        raise HTTPException(status_code=400, detail="Order is already completed")
-    if order.status == OrderStatus.CANCELLED:
-        raise HTTPException(status_code=400, detail="Order is cancelled")
+    if order.status != OrderStatus.AWAITING_CONFIRMATION:
+        raise HTTPException(
+            status_code=400,
+            detail="Order must be in AWAITING_CONFIRMATION status before confirming delivery",
+        )
 
     order.customer_confirmed = True
     order.updated_at = datetime.now(timezone.utc)
@@ -625,6 +633,7 @@ async def get_courier_active_orders(
         .where(
             Order.assigned_to_user_id == current_user.id,
             Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.DONE]),
+            Order.deleted_at.is_(None),
         )
         .order_by(Order.creation_date.desc())
         .offset(skip)
@@ -649,7 +658,10 @@ async def get_courier_all_orders(
     result = await db.execute(
         select(Order)
         .options(selectinload(Order.invoice))
-        .where(Order.assigned_to_user_id == current_user.id)
+        .where(
+            Order.assigned_to_user_id == current_user.id,
+            Order.deleted_at.is_(None),
+        )
         .order_by(Order.creation_date.desc())
         .offset(skip)
         .limit(limit)
@@ -800,7 +812,7 @@ async def complete_order(
 @router.put("/{order_id}/status", response_model=OrderResponse)
 async def update_order_status(
     order_id: str,
-    status: str,
+    new_status_value: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -822,15 +834,8 @@ async def update_order_status(
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
 
-    _COURIER_TRANSITIONS: dict[OrderStatus, OrderStatus | None] = {
-        OrderStatus.RECEIVED_BY_COURIER: OrderStatus.IN_PROGRESS_TO_DO,
-        OrderStatus.IN_PROGRESS_TO_DO: OrderStatus.OUT_FOR_DELIVERY,
-        OrderStatus.OUT_FOR_DELIVERY: OrderStatus.AWAITING_CONFIRMATION,
-        OrderStatus.AWAITING_CONFIRMATION: None,
-    }
-
     try:
-        new_status = OrderStatus(status)
+        new_status = OrderStatus(new_status_value)
     except ValueError:
         new_status = None
 
@@ -839,7 +844,7 @@ async def update_order_status(
         valid_next = next_allowed.value if next_allowed else "none (use /complete)"
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot transition from '{order.status.value}' to '{status}'. "
+            detail=f"Cannot transition from '{order.status.value}' to '{new_status_value}'. "
                    f"Next allowed: '{valid_next}'",
         )
 
@@ -848,5 +853,5 @@ async def update_order_status(
     await db.commit()
     await db.refresh(order)
 
-    await emit_order_status_change(order.id, order.status)
+    await emit_order_status_change(order.id, order.status.value)
     return order

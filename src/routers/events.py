@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import ImportantEvent
+from models.enums import UserRole
 from schemas import (
     CreateImportantEventRequest,
     ImportantEventResponse,
@@ -23,6 +24,8 @@ async def create_important_event(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new important event for the current customer"""
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can manage events")
     event = ImportantEvent(
         user_id=current_user.id,
         title=html.escape(event_data.title),
@@ -45,6 +48,8 @@ async def get_important_events(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all important events for the current customer"""
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can manage events")
     result = await db.execute(
         select(ImportantEvent)
         .where(ImportantEvent.user_id == current_user.id)
@@ -63,6 +68,8 @@ async def get_important_event(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific important event by ID"""
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can manage events")
     result = await db.execute(
         select(ImportantEvent).where(
             ImportantEvent.id == event_id, ImportantEvent.user_id == current_user.id
@@ -86,6 +93,8 @@ async def update_important_event(
     db: AsyncSession = Depends(get_db),
 ):
     """Update an important event"""
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can manage events")
     result = await db.execute(
         select(ImportantEvent).where(
             ImportantEvent.id == event_id, ImportantEvent.user_id == current_user.id
@@ -119,6 +128,8 @@ async def delete_important_event(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an important event"""
+    if current_user.role != UserRole.CUSTOMER:
+        raise HTTPException(status_code=403, detail="Only customers can manage events")
     result = await db.execute(
         select(ImportantEvent).where(
             ImportantEvent.id == event_id, ImportantEvent.user_id == current_user.id

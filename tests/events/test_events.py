@@ -73,10 +73,10 @@ async def test_list_events_pagination(
     assert len(resp.json()) <= 3
 
 
-async def test_list_events_only_own(
+async def test_list_events_courier_forbidden(
     client, courier_headers, db: AsyncSession, customer
 ):
-    """Courier must not see customer's events."""
+    """Couriers are not allowed to access the events endpoint."""
     db.add(
         ImportantEvent(
             user_id=customer.id,
@@ -88,9 +88,7 @@ async def test_list_events_only_own(
     await db.commit()
 
     resp = await client.get("/events/", headers=courier_headers)
-    assert resp.status_code == 200
-    titles = [e["title"] for e in resp.json()]
-    assert "Customer Event" not in titles
+    assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +125,7 @@ async def test_get_event_not_own_returns_404(
     await db.refresh(event)
 
     resp = await client.get(f"/events/{event.id}", headers=courier_headers)
-    assert resp.status_code == 404
+    assert resp.status_code in (403, 404)
 
 
 # ---------------------------------------------------------------------------

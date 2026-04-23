@@ -1,8 +1,3 @@
-import base64
-
-from utils.auth.auth import verify_password
-from utils.database.database import AsyncSessionLocal as SessionLocal
-from fastapi import Request
 from sqladmin import Admin, ModelView
 from wtforms import DateField
 
@@ -292,34 +287,6 @@ class AuditLogAdmin(ModelView, model=AuditLog):
     ]
     column_searchable_list = [AuditLog.action, AuditLog.target_type, AuditLog.target_id]
     column_default_sort = (AuditLog.created_at, True)
-
-
-def authenticate_admin_request(request: Request) -> bool:
-    auth_header = request.headers.get("authorization")
-    if not auth_header or not auth_header.startswith("Basic "):
-        return False
-
-    try:
-        encoded_credentials = auth_header.split(" ")[1]
-        decoded_credentials = base64.b64decode(encoded_credentials).decode("utf-8")
-        username, password = decoded_credentials.split(":", 1)
-
-        db = SessionLocal()
-        try:
-            admin = (
-                db.query(Admin)
-                .filter(Admin.username == username, Admin.is_active == True)
-                .first()
-            )
-            print(f"admin is {admin}")
-
-            if not admin:
-                return False
-            return verify_password(password, admin.password_hash)
-        finally:
-            db.close()
-    except:
-        return False
 
 
 # We'll create the admin instance in main.py after the app is created

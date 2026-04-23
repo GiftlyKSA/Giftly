@@ -420,3 +420,19 @@ class UpdateImportantEventRequest(BaseModel):
             if v < datetime.now(timezone.utc):
                 raise ValueError("Event date cannot be in the past")
         return v
+
+
+class CompleteProfileRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    email: str
+    date_of_birth: str
+    timezone: Optional[str] = None
+    role: str = "Customer"
+
+
+class UpdateTimezoneRequest(BaseModel):
+    timezone: str = Field(..., min_length=1)
+
+
+class UpdatePushTokenRequest(BaseModel):
+    push_token: str = Field(..., min_length=1, max_length=300)

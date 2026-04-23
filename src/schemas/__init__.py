@@ -42,4 +42,7 @@ __all__ = [
     "CreateImportantEventRequest",
     "ImportantEventResponse",
     "UpdateImportantEventRequest",
+    "CompleteProfileRequest",
+    "UpdateTimezoneRequest",
+    "UpdatePushTokenRequest",
 ]

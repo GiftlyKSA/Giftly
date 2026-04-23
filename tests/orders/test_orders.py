@@ -173,6 +173,10 @@ async def test_accept_order_requires_courier_role(
 async def test_confirm_delivery_by_customer(
     client, customer_headers, accepted_order: Order, db: AsyncSession
 ):
+    from models.enums import OrderStatus
+    accepted_order.status = OrderStatus.AWAITING_CONFIRMATION
+    await db.commit()
+
     resp = await client.post(
         f"/orders/{accepted_order.order_id}/confirm-delivery",
         headers=customer_headers,

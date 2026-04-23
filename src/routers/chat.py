@@ -11,6 +11,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Conversation, Message, Order, User
+from models.enums import UserRole
 from schemas import ConversationResponse, CreateConversationRequest, MessageResponse
 from utils.clients.storage_client import upload_media
 
@@ -91,9 +92,9 @@ async def create_or_get_conversation(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Determine roles: current user should be customer, other user should be courier
-    if current_user.role not in ["Customer", "Courier"] or other_user.role not in [
-        "Customer",
-        "Courier",
+    if current_user.role not in [UserRole.CUSTOMER, UserRole.COURIER] or other_user.role not in [
+        UserRole.CUSTOMER,
+        UserRole.COURIER,
     ]:
         raise HTTPException(
             status_code=400, detail="Invalid user roles for conversation"
@@ -107,7 +108,7 @@ async def create_or_get_conversation(
         )
 
     # Determine customer and courier IDs
-    if current_user.role == "Customer":
+    if current_user.role == UserRole.CUSTOMER:
         customer_id = current_user.id
         courier_id = other_user.id
     else:
