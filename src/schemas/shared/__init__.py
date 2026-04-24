@@ -11,6 +11,36 @@ from models.enums import PaymentMethod as PaymentMethodEnum
 from models.enums import PaymentStatus as PaymentStatusEnum
 
 
+def _normalize_optional_text(v):
+    """Strip whitespace; return None if the result is empty."""
+    if v is not None and len(v.strip()) == 0:
+        return None
+    return v
+
+
+def _validate_event_title(v, *, required: bool = True):
+    if v is None:
+        return v
+    v = v.strip()
+    if required and not v:
+        raise ValueError("Title is required")
+    if not v:
+        raise ValueError("Title cannot be empty")
+    if len(v) > 200:
+        raise ValueError("Title must be less than 200 characters")
+    return v
+
+
+def _validate_future_datetime(v):
+    if v is None:
+        return v
+    if v.tzinfo is None:
+        v = v.replace(tzinfo=timezone.utc)
+    if v < datetime.now(timezone.utc):
+        raise ValueError("Event date cannot be in the past")
+    return v
+
+
 class UpdateUserProfile(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -73,9 +103,7 @@ class CreateOrder(BaseModel):
     @field_validator("description", mode="before")
     @classmethod
     def validate_description(cls, v):
-        if v is not None and len(v.strip()) == 0:
-            return None
-        return v
+        return _normalize_optional_text(v)
 
 
 class CreateOrderWithImages(BaseModel):
@@ -88,9 +116,7 @@ class CreateOrderWithImages(BaseModel):
     @field_validator("description", mode="before")
     @classmethod
     def validate_description(cls, v):
-        if v is not None and len(v.strip()) == 0:
-            return None
-        return v
+        return _normalize_optional_text(v)
 
 
 class InvoiceResponse(BaseModel):
@@ -367,20 +393,12 @@ class CreateImportantEventRequest(BaseModel):
     @field_validator("title")
     @classmethod
     def validate_title(cls, v):
-        if not v or len(v.strip()) == 0:
-            raise ValueError("Title is required")
-        if len(v.strip()) > 200:
-            raise ValueError("Title must be less than 200 characters")
-        return v.strip()
+        return _validate_event_title(v, required=True)
 
     @field_validator("event_date")
     @classmethod
     def validate_event_date(cls, v):
-        if v.tzinfo is None:
-            v = v.replace(tzinfo=timezone.utc)
-        if v < datetime.now(timezone.utc):
-            raise ValueError("Event date cannot be in the past")
-        return v
+        return _validate_future_datetime(v)
 
 
 class ImportantEventResponse(BaseModel):
@@ -403,23 +421,12 @@ class UpdateImportantEventRequest(BaseModel):
     @field_validator("title")
     @classmethod
     def validate_title(cls, v):
-        if v is not None:
-            if len(v.strip()) == 0:
-                raise ValueError("Title cannot be empty")
-            if len(v.strip()) > 200:
-                raise ValueError("Title must be less than 200 characters")
-            return v.strip()
-        return v
+        return _validate_event_title(v, required=False)
 
     @field_validator("event_date")
     @classmethod
     def validate_event_date(cls, v):
-        if v is not None:
-            if v.tzinfo is None:
-                v = v.replace(tzinfo=timezone.utc)
-            if v < datetime.now(timezone.utc):
-                raise ValueError("Event date cannot be in the past")
-        return v
+        return _validate_future_datetime(v)
 
 
 class CompleteProfileRequest(BaseModel):

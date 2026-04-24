@@ -1,38 +1,21 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
-from enum import Enum
+from datetime import date
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator
+
+from models.enums import InvoiceStatus as InvoiceStatusEnum  # noqa: F401 — re-exported
+from models.enums import OrderStatus as OrderStatusEnum  # noqa: F401 — re-exported
+
+_SAUDI_PHONE_RE = re.compile(r"^(\+966|0)?[5][0-9]{8}$")
 
 
-class OrderStatusEnum(str, Enum):
-    NEW = "new"
-    RECEIVED_BY_COURIER = "received by courier"
-    INVOICE_CREATED = "invoice created"
-    PAYMENT_PENDING = "payment pending"
-    PAYMENT_AUTHORIZED = "payment authorized"
-    AWAITING_PICKUP = "awaiting pickup"
-    PAID = "paid"
-    IN_PROGRESS_TO_DO = "in progress to do"
-    CANCELLED = "cancelled"
-    DONE = "done"
-    IN_PROGRESS_TO_DELIVER = "in progress to deliver"
-    OUT_FOR_DELIVERY = "out for delivery"
-    AWAITING_CONFIRMATION = "awaiting confirmation"
-
-
-class InvoiceStatusEnum(str, Enum):
-    NEW = "new"
-    DRAFT = "draft"
-    PENDING_APPROVAL = "pending approval"
-    APPROVED = "approved"
-    PAID = "paid"
-    CANCELLED = "cancelled"
-    REFUNDED = "refunded"
-    OTHER = "other"
+def _clean_saudi_phone(v: str) -> str:
+    if not _SAUDI_PHONE_RE.match(v):
+        raise ValueError("Invalid Saudi phone number format")
+    return re.sub(r"^(\+966|0)+", "", v)
 
 
 class SendOTP(BaseModel):
@@ -41,10 +24,7 @@ class SendOTP(BaseModel):
     @field_validator("phone_number")
     @classmethod
     def validate_phone_number(cls, v):
-        if not re.match(r"^(\+966|0)?[5][0-9]{8}$", v):
-            raise ValueError("Invalid Saudi phone number format")
-        clean = re.sub(r"^(\+966|0)+", "", v)
-        return clean
+        return _clean_saudi_phone(v)
 
 
 class OTPVerify(BaseModel):
@@ -61,10 +41,7 @@ class OTPVerify(BaseModel):
     @field_validator("phone_number")
     @classmethod
     def validate_phone_number(cls, v):
-        if not re.match(r"^(\+966|0)?[5][0-9]{8}$", v):
-            raise ValueError("Invalid Saudi phone number format")
-        clean = re.sub(r"^(\+966|0)+", "", v)
-        return clean
+        return _clean_saudi_phone(v)
 
     @field_validator("otp")
     @classmethod
