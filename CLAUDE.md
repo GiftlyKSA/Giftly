@@ -43,11 +43,14 @@ The `sqladmin` package's `Admin` class is imported as `SQLAdmin` to avoid collid
 
 **Database lifecycle.** Schema is owned by **Alembic** (`migrations/`). `lifespan` no longer calls `create_all` — apply schema with `uv run alembic upgrade head`. The container's `entrypoint.sh` runs the upgrade before booting uvicorn. To add a new migration: `uv run alembic revision --autogenerate -m "add_thing"` (requires a reachable DB matching `DATABASE_URL`). `migrations/env.py` injects `settings.database_url` into Alembic's config and points `target_metadata` at `Base.metadata`, so `--autogenerate` will diff models against the live DB.
 
-**Seed data.** `scripts/seed.py` populates a fresh DB with 2 cities, 1 admin (`admin` / `admin`), 2 approved couriers (one per city), 3 customers, wallets for everyone, and 3 orders + invoices per customer. Idempotent by phone/username — safe to re-run. `uv run python scripts/seed.py`.
+**Seed data.** `scripts/seed.py` populates a fresh DB with 2 cities, 1 admin (`admin` / `admin`), 2 approved couriers (one per city), 3 customers, wallets for everyone, and 3 orders + invoices per customer. Idempotent by phone/username — safe to re-run.
 
-**Models** (`src/models/`) are re-exported from `models/__init__.py`; always import from `models` (not the submodule path) so SQLAdmin and SQLAlchemy relationship resolution see the same class objects. Domain enums live in `models/enums.py` and drive state machines for `Order`, `Invoice`, `Payment`, `Conversation`, `DepositRequest`. **Money is stored as integers in halalas** (1 SAR = 100); e.g. `Wallet.balance = 50_000` is 500 SAR. Never use floats for money.
+**Models** (`src/models/`) are all flat files at the root of the package — no sub-packages. They are re-exported from `models/__init__.py`; always import from `models` (not the submodule path) so SQLAdmin and SQLAlchemy relationship resolution see the same class objects. Domain enums live in `models/enums.py` and drive state machines for `Order`, `Invoice`, `Payment`, `Conversation`, `DepositRequest`. **Money is stored as integers in halalas** (1 SAR = 100); e.g. `Wallet.balance = 50_000` is 500 SAR. Never use floats for money.
 
-**Schemas** (`src/schemas/`) are split by audience — `admin/`, `courier/`, `customer/`, `shared/` — keeping role-specific request/response shapes separated even when they wrap the same model.
+**Schemas** (`src/schemas/`) contain Pydantic request/response shapes:
+- `schemas/auth/` — OTP/phone validation schemas (`SendOTP`, `OTPVerify`) and auth-related enums. Re-exports `OrderStatusEnum` and `InvoiceStatusEnum` from `models.enums`.
+- `schemas/shared/` — all other request/response schemas used across routers.
+- `schemas/__init__.py` — star-exports both; import from `schemas` everywhere.
 
 **Background tasks.** `src/tasks/broker.py` configures a TaskIQ `ListQueueBroker` against Redis. `src/tasks/email_tasks.py` registers tasks; `main.py` imports it for side-effect registration (`# noqa: F401`). `lifespan` only starts/stops the broker when *not* running inside a worker process (`broker.is_worker_process`), so the same module is safe to import from both API and worker.
 
@@ -57,10 +60,11 @@ The `sqladmin` package's `Admin` class is imported as `SQLAdmin` to avoid collid
 
 **Middleware order matters** (registered last = runs first in FastAPI): `ForceHTTPSMiddleware` → `SecurityHeadersMiddleware` → `RequestLoggingMiddleware` → `LastActivityMiddleware`. The HTTP→HTTPS redirect happens before anything else, which 301s plain-HTTP local traffic — front the dev server with TLS or hit `https://` directly.
 
-**External clients** are isolated in `src/utils/clients/` (`paylink.py`, `sms.py`, `storage_client.py` for S3). Tests neutralize them via env (`SMS_PROVIDER_ENABLED=false`, `PAYLINK_TEST_MODE=true`, dummy AWS creds). When mocking these in tests, patch the **import site** (e.g. `routers.auth.send_sms`), not the source module.
+**Logging.** `src/utils/logging_config.py` provides `configure_logging(debug=bool)`. When `debug=False` (production) it emits one JSON object per record to stdout; when `debug=True` it emits colored human-readable output. Called once at module level in `main.py` before the app object is created. Uvicorn access logs are suppressed (handled by `RequestLoggingMiddleware`).
+
+**External clients** are isolated in `src/utils/clients/` (`paylink.py`, `sms.py`, `storage_client.py` for S3, `push.py` stub for FCM/APNs). Tests neutralize them via env (`SMS_PROVIDER_ENABLED=false`, `PAYLINK_TEST_MODE=true`, dummy AWS creds). When mocking these in tests, patch the **import site** (e.g. `routers.auth.send_sms`), not the source module.
 
 ## Known issues
 
-- `mcp.json` at the repo root contains a committed GitHub PAT. Treat as compromised — rotate and purge from git history.
+- `mcp.json` at the repo root contains a committed GitHub PAT. Treat as compromised — rotate the token and purge the file from git history with `git filter-repo`.
 - CI (`.github/workflows/ci.yml`) only triggers on pushes to `dev`; PRs into `main` do not run tests automatically.
-- `entrypoint.sh` previously referenced `test_scripts_for_admin_dashboard/` (not in the repo); now stripped to a minimal uvicorn boot.

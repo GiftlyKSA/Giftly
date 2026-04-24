@@ -18,18 +18,25 @@ The API exposes REST endpoints for auth (phone-OTP), orders, invoices, payments,
 ```
 src/
 ├── main.py             FastAPI app: middleware, routers, SQLAdmin, /ws
-├── routers/            REST endpoints (auth, orders, chat, payments, …)
-├── models/             SQLAlchemy models — re-exported from models/__init__.py
-├── schemas/            Pydantic request/response shapes (split by audience)
-├── middleware/         Logging + last-activity tracking
-├── tasks/              TaskIQ broker + registered background tasks
+├── routers/            REST endpoints (auth, orders, chat, payments, wallets, …)
+├── models/             SQLAlchemy models — flat files, re-exported from __init__.py
+│   └── enums.py        Domain enums shared by models, schemas, and routers
+├── schemas/
+│   ├── auth/           OTP/phone schemas + re-exported status enums
+│   └── shared/         All other Pydantic request/response shapes
+├── middleware/         HTTP request logging + last-activity tracking
+├── tasks/              TaskIQ broker + background email tasks
 └── utils/
-    ├── auth/           JWT issue/verify, token rotation
-    ├── clients/        External integrations: paylink, sms, S3 storage
-    ├── database/       Settings + async engine/session
-    ├── email/          Jinja2 email templating
-    └── websocket/      WebSocket connection + room manager
+    ├── auth/           JWT issue/verify, token rotation, password hashing
+    ├── clients/        External integrations: Paylink, SMS, S3 storage, push stub
+    ├── database/       Settings (pydantic-settings) + async engine/session
+    ├── email/          Jinja2 templates + email providers (SMTP/SendGrid/…)
+    ├── logging_config.py  JSON (prod) + colored (dev) logging setup
+    ├── rate_limit.py   Per-IP sliding-window rate limiter factory
+    ├── redis_client.py Redis connection lifecycle
+    └── websocket/      WebSocket connection manager + server-push event helpers
 tests/                  Pytest suite — runs against in-memory SQLite
+docs/                   API reference, security audit, codebase audit, suggestions
 ```
 
 ## Getting started
