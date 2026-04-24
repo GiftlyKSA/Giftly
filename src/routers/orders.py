@@ -15,7 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +29,8 @@ from models import (
     Order,
     OrderImage,
     Payment,
+    Promocode,
+    PromocodeUsage,
     User,
     Wallet,
 )
@@ -78,6 +80,11 @@ async def create_order(
     city = result.scalar_one_or_none()
     if not city:
         raise HTTPException(status_code=400, detail="Invalid city ID")
+
+    # M-04: delivery_date must be in the future
+    delivery_dt = delivery_date if delivery_date.tzinfo else delivery_date.replace(tzinfo=timezone.utc)
+    if delivery_dt <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="delivery_date must be in the future")
 
     if description is not None:
         description = description.strip() or None
@@ -347,6 +354,20 @@ async def cancel_order(
             .values(status=PaymentStatus.FAILED)
         )
 
+        # M-06: Roll back promo usage if the invoice had a promocode applied
+        if order.invoice.promocode_id:
+            await db.execute(
+                update(Promocode)
+                .where(Promocode.id == order.invoice.promocode_id, Promocode.usage_count > 0)
+                .values(usage_count=Promocode.usage_count - 1)
+            )
+            await db.execute(
+                delete(PromocodeUsage).where(
+                    PromocodeUsage.user_id == order.created_by_user_id,
+                    PromocodeUsage.promocode_id == order.invoice.promocode_id,
+                )
+            )
+
     await db.commit()
     await db.refresh(order)
 
@@ -500,10 +521,15 @@ async def accept_order(
     if order.city_id != profile.city_id:
         raise HTTPException(status_code=400, detail="Order is not in your city")
 
-    # Atomically claim the order — only one courier wins if two accept simultaneously
+    # Atomically claim the order — city_id in WHERE prevents a courier from grabbing
+    # an order that was reassigned to a different city between the read and this update
     claim = await db.execute(
         update(Order)
-        .where(Order.order_id == order_id, Order.status == OrderStatus.NEW)
+        .where(
+            Order.order_id == order_id,
+            Order.status == OrderStatus.NEW,
+            Order.city_id == profile.city_id,
+        )
         .values(
             assigned_to_user_id=current_user.id,
             status=OrderStatus.RECEIVED_BY_COURIER,

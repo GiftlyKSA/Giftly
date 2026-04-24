@@ -243,6 +243,13 @@ async def paylink_callback(
     client_ip = request.client.host if request.client else "unknown"
     _check_callback_rate_limit(client_ip)
 
+    # M-01: In production, refuse unsigned webhooks entirely
+    if not settings.paylink_webhook_secret and not settings.debug:
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook endpoint not configured. Contact support.",
+        )
+
     # HMAC signature verification — enforced when PAYLINK_WEBHOOK_SECRET is set
     if settings.paylink_webhook_secret:
         raw_body = await request.body()
@@ -533,13 +540,24 @@ async def pay_with_wallet(
         payment_amount = max(invoice.full_amount - discount_amount, 0)
         coupon_used = coupon
 
-    if wallet.balance < payment_amount:
+    # Atomic conditional deduction — prevents negative balance under concurrent requests
+    deduct = await db.execute(
+        update(Wallet)
+        .where(Wallet.user_id == current_user.id, Wallet.balance >= payment_amount)
+        .values(
+            balance=Wallet.balance - payment_amount,
+            updated_at=datetime.now(timezone.utc),
+        )
+        .returning(Wallet.balance)
+    )
+    row = deduct.fetchone()
+    if row is None:
         raise HTTPException(status_code=400, detail="Insufficient wallet balance")
 
+    await db.refresh(wallet)
+    balance_before = wallet.balance + payment_amount  # balance before deduction
+
     try:
-        balance_before = wallet.balance
-        wallet.balance -= payment_amount
-        wallet.updated_at = datetime.now(timezone.utc)
 
         invoice.status = InvoiceStatus.PAID
         invoice.updated_at = datetime.now(timezone.utc)

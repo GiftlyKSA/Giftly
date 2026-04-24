@@ -52,6 +52,13 @@ async def create_invoice_by_courier(
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Invoice already exists for this order")
 
+    max_halalas = settings.invoice_max_amount_sar * 100
+    if invoice_data.full_amount > max_halalas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invoice amount exceeds maximum allowed ({settings.invoice_max_amount_sar:,} SAR)",
+        )
+
     invoice_id = f"INV-{secrets.token_hex(6).upper()}"
 
     # Store amounts as floats directly (no multiplication by 1000)
@@ -115,6 +122,13 @@ async def update_invoice_by_courier(
 
     if order.assigned_to_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Order is not assigned to you")
+
+    max_halalas = settings.invoice_max_amount_sar * 100
+    if invoice_data.full_amount > max_halalas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invoice amount exceeds maximum allowed ({settings.invoice_max_amount_sar:,} SAR)",
+        )
 
     invoice.full_amount = invoice_data.full_amount
     invoice.service_fee = invoice_data.service_fee

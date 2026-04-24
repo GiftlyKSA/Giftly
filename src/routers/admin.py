@@ -109,6 +109,20 @@ async def approve_courier(
     if not profile:
         raise HTTPException(status_code=404, detail="Courier profile not found")
 
+    # L-03: Verify required fields before approval
+    missing = []
+    if not profile.national_id and not profile.passport_id:
+        missing.append("national_id or passport_id")
+    if not profile.iban:
+        missing.append("iban")
+    if not profile.city_id:
+        missing.append("city_id")
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot approve courier — missing required fields: {', '.join(missing)}",
+        )
+
     profile.is_approved = True
     await _audit(db, current_admin.id, "courier.approve", "courier", user_id)
     await db.commit()

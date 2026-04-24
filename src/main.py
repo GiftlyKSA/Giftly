@@ -163,8 +163,12 @@ app.include_router(couriers.router, prefix="/couriers", tags=["couriers"])
 # Cache successful bcrypt verifications for 60 s to avoid bcrypt DoS on static assets
 # ---------------------------------------------------------------------------
 
-_admin_auth_cache: dict[str, float] = {}  # sha256(Authorization) -> expiry monotonic
+_admin_auth_cache: dict[str, float] = {}  # cache_key -> expiry monotonic
 _ADMIN_AUTH_CACHE_TTL = 60  # seconds
+
+# M-02: per-user WS message rate limit (sliding window, in-process)
+from collections import defaultdict as _defaultdict
+_ws_msg_timestamps: dict[int, list[float]] = _defaultdict(list)
 
 
 @app.middleware("http")
@@ -179,7 +183,17 @@ async def admin_auth_middleware(request: Request, call_next):
             )
 
         now = time.monotonic()
-        cache_key = hashlib.sha256(auth_header.encode()).hexdigest()
+        # L-06: Key on username + hashed password so a raw-header replay won't
+        # warm the cache with a different account's credentials.
+        try:
+            _enc = auth_header.split(" ", 1)[1]
+            _dec = base64.b64decode(_enc).decode("utf-8")
+            _uname, _pw = _dec.split(":", 1)
+            cache_key = hashlib.sha256(
+                f"{_uname}:{hashlib.sha256(_pw.encode()).hexdigest()}".encode()
+            ).hexdigest()
+        except Exception:
+            cache_key = hashlib.sha256(auth_header.encode()).hexdigest()
 
         # Evict expired entries (admin panel has few users — O(n) is fine)
         expired = [k for k, v in _admin_auth_cache.items() if v <= now]
@@ -385,6 +399,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 manager.disconnect(user.id)
                 await manager.send_to_user(user.id, {"action": "left_all_rooms"})
             elif action == "send_message":
+                # M-02: per-user sliding-window rate limit
+                _now = time.monotonic()
+                _window = 60.0
+                _uid_msgs = _ws_msg_timestamps[user.id]
+                _ws_msg_timestamps[user.id] = [t for t in _uid_msgs if _now - t < _window]
+                if len(_ws_msg_timestamps[user.id]) >= settings.ws_msg_rate_limit_per_minute:
+                    await websocket.send_json({"error": "Message rate limit exceeded"})
+                    continue
+                _ws_msg_timestamps[user.id].append(_now)
+
                 room = data.get("room")
                 message_content = data.get("content")
                 # Basic input sanitization to prevent injection attacks
@@ -413,11 +437,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                             conversation.customer_id,
                             conversation.courier_id,
                         ]:
+                            # M-07: whitelist message_type to prevent unexpected values in DB
+                            _ALLOWED_MSG_TYPES = {"text", "invoice", "image", "video"}
+                            msg_type = data.get("message_type", "text")
+                            if msg_type not in _ALLOWED_MSG_TYPES:
+                                msg_type = "text"
                             new_message = Message(
                                 conversation_id=conversation_id,
                                 sender_id=user.id,
                                 content=message_content,
-                                message_type=data.get("message_type", "text"),
+                                message_type=msg_type,
                             )
                             db.add(new_message)
                             await db.commit()

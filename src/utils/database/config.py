@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     rate_limit_wallet_charge_per_minute: int = 5
     rate_limit_coupon_verify_per_minute: int = 10
 
+    # WebSocket per-user message rate limit (messages per minute)
+    ws_msg_rate_limit_per_minute: int = 60
+
+    # Temporary access token lifetime for new unverified customers (minutes)
+    temp_token_expire_minutes: int = 30
+
+    # Maximum invoice amount (SAR) — courier-created invoices are capped at this value
+    invoice_max_amount_sar: int = 50_000
+
     # Conversations list page size cap
     chat_conversations_max_limit: int = 100
 

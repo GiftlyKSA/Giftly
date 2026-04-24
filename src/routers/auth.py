@@ -45,6 +45,9 @@ _PHONE_MAX = settings.rate_limit_otp_max
 
 _phone_timestamps: dict[str, list[float]] = defaultdict(list)
 _verify_timestamps: dict[str, list[float]] = defaultdict(list)
+# L-01: OTP brute-force counter — phone → consecutive failure count
+_otp_failures: dict[str, int] = {}
+_OTP_MAX_FAILURES = 3
 
 
 async def _check_phone_rate_limit(phone: str) -> None:
@@ -134,7 +137,15 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
     # Normalize phone before rate limit to prevent bypass via format variations
     normalized_phone = re.sub(r"^(\+966|0)+", "", otp_data.phone_number)
     await _check_phone_verify_rate_limit(normalized_phone)
-    user = await get_user_by_phone(db, otp_data.phone_number)
+
+    # L-01: Block after too many failures to prevent brute-force
+    if _otp_failures.get(normalized_phone, 0) >= _OTP_MAX_FAILURES:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts. Please request a new OTP.",
+        )
+
+    user = await get_user_by_phone(db, normalized_phone)
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
 
@@ -151,15 +162,25 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
         ):
             # Invalidate expired OTP
             user.otp = None
+            _otp_failures.pop(normalized_phone, None)
             await db.commit()
             raise HTTPException(
                 status_code=400, detail="OTP has expired. Please request a new one."
             )
 
     if not secrets.compare_digest(user.otp or "", otp_data.otp or ""):
-        logging.warning("OTP verification failed for %s", normalized_phone)
+        _otp_failures[normalized_phone] = _otp_failures.get(normalized_phone, 0) + 1
+        if _otp_failures[normalized_phone] >= _OTP_MAX_FAILURES:
+            user.otp = None
+            await db.commit()
+        logging.warning(
+            "OTP verification failed for %s (attempt %d)",
+            normalized_phone,
+            _otp_failures[normalized_phone],
+        )
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
+    _otp_failures.pop(normalized_phone, None)
     user.otp = None  # Consume OTP
 
     if user.role == UserRole.COURIER:
@@ -243,7 +264,7 @@ async def verify_otp(otp_data: OTPVerify, db: AsyncSession = Depends(get_db)):
         else:
             temp_token = create_access_token(
                 data={"sub": str(user.id), "temp": True},
-                expires_delta=timedelta(minutes=30),
+                expires_delta=timedelta(minutes=settings.temp_token_expire_minutes),
             )
             await db.commit()
             return {

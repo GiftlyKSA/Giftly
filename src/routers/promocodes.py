@@ -1,3 +1,4 @@
+import html
 from datetime import datetime, timezone
 from typing import List
 
@@ -91,9 +92,9 @@ async def get_active_promocodes(
         result.append(
             {
                 "id": promo.id,
-                "name": promo.name,
+                "name": html.escape(promo.name or ""),
                 "code": promo.code,
-                "description": promo.description,
+                "description": html.escape(promo.description or ""),
                 "percentage": promo.percentage,
                 "max_value": promo.max_value,
                 "minimum_order_value": promo.minimum_order_value,
