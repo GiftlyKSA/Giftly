@@ -174,7 +174,7 @@ async def admin_charge_wallet(
     await db.commit()
 
     return {
-        "message": f"Charged {amount} halaym to user {user_id}",
+        "message": f"Successfully charged {amount / 100:.2f} SAR to wallet for user {user_id}",
         "new_balance": wallet.balance,
     }
 

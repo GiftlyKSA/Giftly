@@ -196,7 +196,7 @@ Every order ever assigned to the courier.
 Marks the order `DONE` and credits the courier's wallet with `invoice.courier_fee`. Requires the customer to have called `confirm-delivery` first and the invoice to be `PAID`.
 **Response 200**: `OrderResponse`. **Errors**: 400 (no confirm, invoice not paid), 403, 404, 500.
 
-### `PUT /orders/{order_id}/status?status=...` 🛵
+### `PUT /orders/{order_id}/status?new_status_value=...` 🛵
 Updates the assigned order's status to one of `received by courier`, `in_progress`, `ready_for_delivery`, `out_for_delivery`.
 **Response 200**: `OrderResponse`.
 
@@ -270,10 +270,10 @@ Generates a PDF (ReportLab) and streams it back; the temp file is deleted ~10 mi
 Same as above, addressed by primary key.
 
 ### `POST /invoices/verify-coupon` 🔑
-Calculates a discount preview without applying it.
+Calculates a discount preview without applying it. Rate limited per IP (`RATE_LIMIT_COUPON_VERIFY_PER_MINUTE`, default 10/min).
 **Body** `application/x-www-form-urlencoded`: `coupon_code=SAVE10&invoice_id=42`
 **Response 200**: `{ "coupon_id": int, "discount_amount": int, "final_amount": int, "description": str }`
-**Errors**: 400 (invalid/expired/exceeded usage/min order not met, invoice already paid).
+**Errors**: 400 (invalid/expired/exceeded usage/min order not met, invoice already paid), 429 (rate limit).
 
 ### `InvoiceResponse` shape
 ```json
@@ -379,9 +379,9 @@ Settles an invoice from wallet balance. Optional promo code is validated (active
 ### `POST /wallets/initiate-charge` 🔑
 Wallet top-up via Paylink. Creates a PENDING `Payment` (no invoice) and asks Paylink for an `orderNumber=<payment.id>`. The callback later credits the wallet.
 
-**Body**: `{ "amount_sar": 100 }` — minimum 10 SAR.
+**Body**: `{ "amount_sar": 100 }` — minimum `WALLET_CHARGE_MIN_SAR` SAR (default 10), maximum `WALLET_CHARGE_MAX_SAR` SAR (default 1000). Rate limited per IP.
 **Response 200**: `{ "payment_url": "...", "payment_id": 12, "amount_sar": 100, "status": "pending" }`
-**Errors**: 400 (<10 SAR), 404 (no wallet), 502/503 (gateway).
+**Errors**: 400 (out of range), 404 (no wallet), 429 (rate limit), 502/503 (gateway).
 
 ### `POST /wallets/request-deposit` 🛵
 Courier requests a payout from their wallet balance. Creates a `DepositRequest` for admin review; balance is **not** deducted yet.
@@ -447,8 +447,8 @@ Sends a message with optional media upload. `multipart/form-data`:
 
 **Response 200**: `MessageResponse`.
 
-### `GET /chat/conversations` 🔑
-All conversations the caller is part of.
+### `GET /chat/conversations?skip=0&limit=20` 🔑
+Paginated conversations the caller is part of (newest first). `limit` is capped by `CHAT_CONVERSATIONS_MAX_LIMIT` (default 100).
 **Response 200**: `ConversationResponse[]`.
 
 ### `GET /chat/conversations/by-order/{order_id}` 🔑
@@ -556,8 +556,8 @@ Sets `is_approved=false`.
 
 ### `POST /admin/wallets/{user_id}/charge` 🛡️
 Credits a user's wallet.
-**Body**: `{ "amount": 10000 }` — positive integer halalas.
-**Response 200**: `{ "message": "Charged 10000 halaym to user 5", "new_balance": 60000 }`.
+**Body**: `{ "amount": 10000 }` — positive integer halalas. Max capped by `ADMIN_WALLET_CHARGE_MAX_HALALAS` (default 1,000,000).
+**Response 200**: `{ "message": "Successfully charged 100.00 SAR to wallet for user 5", "new_balance": 60000 }`.
 
 ### `POST /admin/cleanup/soft-deleted?retention_days=90` 🛡️
 Hard-deletes soft-deleted rows (across orders, invoices, payments, conversations, messages, courier_reviews, promocodes) older than `retention_days`.

@@ -329,11 +329,15 @@ async def send_message(
 
 @router.get("/conversations", response_model=List[ConversationResponse])
 async def get_user_conversations(
-    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Get all conversations for the current user.
+    Get paginated conversations for the current user (newest first).
     """
+    limit = min(limit, settings.chat_conversations_max_limit)
     result = await db.execute(
         select(Conversation)
         .where(
@@ -341,6 +345,8 @@ async def get_user_conversations(
             | (Conversation.courier_id == current_user.id)
         )
         .order_by(desc(Conversation.created_at))
+        .offset(skip)
+        .limit(limit)
     )
     conversations = result.scalars().all()
 

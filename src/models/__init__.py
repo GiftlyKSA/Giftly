@@ -1,11 +1,11 @@
-from .admin.admin import Admin
+from .admin import Admin
 from .audit_log import AuditLog
 from .city import City
 from .conversation import Conversation
-from .courier.courier_profile import CourierProfile
+from .courier_profile import CourierProfile
 from .courier_balance_addition import CourierBalanceAddition
 from .courier_review import CourierReview
-from .customer.customer_profile import CustomerProfile
+from .customer_profile import CustomerProfile
 from .deposit_request import DepositRequest
 from .enums import (
     ConversationStatus,

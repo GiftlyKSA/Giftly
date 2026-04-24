@@ -22,7 +22,7 @@ from utils.rate_limit import make_ip_rate_limiter
 
 router = APIRouter()
 
-_charge_rate_limit = make_ip_rate_limiter(5, 60)
+_charge_rate_limit = make_ip_rate_limiter(settings.rate_limit_wallet_charge_per_minute, 60)
 
 
 @router.get("/my-wallet", response_model=WalletResponse)
@@ -87,7 +87,7 @@ async def initiate_wallet_charge(
         ) as paylink:
             response = await paylink.create_order(
                 {
-                    "amount": float(amount_sar),
+                    "amount": round(amount_sar, 2),
                     "currency": "SAR",
                     "description": f"Wallet top-up for user {current_user.id}",
                     "customer": {

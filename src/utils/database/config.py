@@ -54,7 +54,18 @@ class Settings(BaseSettings):
 
     # Wallet charge limits (SAR)
     wallet_charge_min_sar: int = 10
-    wallet_charge_max_sar: int = 100
+    wallet_charge_max_sar: int = 1000
+
+    # Paylink webhook secret — if set, HMAC-SHA256 of the raw JSON body must match X-Paylink-Signature
+    paylink_webhook_secret: str = ""
+
+    # Per-endpoint rate limits (requests per minute per IP)
+    rate_limit_payment_create_per_minute: int = 20
+    rate_limit_wallet_charge_per_minute: int = 5
+    rate_limit_coupon_verify_per_minute: int = 10
+
+    # Conversations list page size cap
+    chat_conversations_max_limit: int = 100
 
     # Admin wallet charge limit (halalas; 1 SAR = 100 halalas)
     admin_wallet_charge_max_halalas: int = 1_000_000

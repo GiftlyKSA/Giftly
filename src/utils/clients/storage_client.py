@@ -1,175 +1,154 @@
-import random
-import string
+"""
+S3-compatible object storage client (AWS S3 or Cloudflare R2).
+
+Design:
+- One boto3 client is created per process at first use and reused across requests.
+- Blocking `put_object` calls are offloaded to a thread-pool executor so the
+  async event loop is never stalled during uploads.
+- S3 key path components (username) are sanitised to prevent path traversal.
+"""
+
+import asyncio
+import functools
+import logging
+import re
 import uuid
 from typing import Dict
 
 import boto3
-from utils.database.config import settings
-from models.enums import ImageType
 from fastapi import UploadFile
 
+from models.enums import ImageType
+from utils.database.config import settings
 
-def generate_random_string(length: int = 8) -> str:
-    """Generate a random string of specified length."""
-    characters = string.ascii_letters + string.digits
-    return "".join(random.choice(characters) for _ in range(length))
+logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Singleton S3 client — created once, reused across all requests
+# ---------------------------------------------------------------------------
 
-def get_subfolder(image_type: ImageType) -> str:
-    """Get the subfolder name based on image type."""
-    if image_type == ImageType.CHAT:
-        return "chat_images"
-    elif image_type == ImageType.ORDER:
-        return "order_creation_images"
-    elif image_type == ImageType.GALLERY:
-        return "gallery"
-    else:
-        raise ValueError(f"Invalid image type: {image_type}")
+_s3_client: boto3.client = None  # type: ignore[assignment]
 
 
-def get_media_subfolder(media_type: str) -> str:
-    """Get the subfolder name based on media type for messages."""
-    if media_type == "image":
-        return "chat_images"
-    elif media_type == "video":
-        return "chat_videos"
-    else:
-        raise ValueError(f"Invalid media type: {media_type}")
+def _get_s3_client() -> boto3.client:  # type: ignore[name-defined]
+    global _s3_client
+    if _s3_client is None:
+        kwargs: dict = {
+            "aws_access_key_id": settings.aws_access_key_id,
+            "aws_secret_access_key": settings.aws_secret_access_key,
+        }
+        if settings.storage_endpoint_url:
+            kwargs["endpoint_url"] = settings.storage_endpoint_url
+            kwargs["region_name"] = "auto"
+        else:
+            kwargs["region_name"] = settings.aws_region
+        _s3_client = boto3.client("s3", **kwargs)
+        logger.info("S3 client initialised (endpoint=%s, bucket=%s)",
+                    settings.storage_endpoint_url or "aws", settings.aws_s3_bucket_name)
+    return _s3_client
 
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+_SAFE_COMPONENT = re.compile(r"[^a-zA-Z0-9._-]")
+
+
+def _safe(value: str, max_len: int = 48) -> str:
+    """Replace unsafe characters and cap length for use in S3 key segments."""
+    return _SAFE_COMPONENT.sub("_", value)[:max_len]
+
+
+_SUBFOLDER: dict[ImageType, str] = {
+    ImageType.CHAT:    "chat_images",
+    ImageType.ORDER:   "order_images",
+    ImageType.GALLERY: "gallery",
+}
+
+_MEDIA_SUBFOLDER: dict[str, str] = {
+    "image": "chat_images",
+    "video": "chat_videos",
+}
+
+
+def _ext_from_filename(filename: str | None, fallback: str) -> str:
+    if filename and "." in filename:
+        raw = filename.rsplit(".", 1)[-1].lower()
+        return _SAFE_COMPONENT.sub("", raw)[:10] or fallback
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# Core upload — runs blocking boto3 call in executor
+# ---------------------------------------------------------------------------
+
+async def _put_object(s3_key: str, body: bytes, content_type: str) -> None:
+    client = _get_s3_client()
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                client.put_object,
+                Bucket=settings.aws_s3_bucket_name,
+                Key=s3_key,
+                Body=body,
+                ContentType=content_type,
+                ServerSideEncryption="AES256",
+            ),
+        )
+    except Exception:
+        logger.exception("S3 upload failed: key=%s bucket=%s",
+                         s3_key, settings.aws_s3_bucket_name)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
 
 async def upload_image(
-    user_id: int, username: str, image_type: ImageType, image: UploadFile
+    user_id: int,
+    username: str,
+    image_type: ImageType,
+    image: UploadFile,
 ) -> Dict[str, str]:
-    """
-    Upload an image to S3 storage.
+    """Upload an image to S3; returns ``{"url": ..., "filename": ...}``."""
+    subfolder = _SUBFOLDER.get(image_type, "uploads")
+    ext = _ext_from_filename(image.filename, "jpg")
+    s3_key = f"{subfolder}/{user_id}-{_safe(username)}/{uuid.uuid4()}.{ext}"
 
-    Args:
-        user_id: The user's ID
-        username: The user's username
-        image_type: The type of image (CHAT, ORDER, GALLERY)
-        image: The uploaded image file
+    content = await image.read()
+    content_type = image.content_type or "image/jpeg"
 
-    Returns:
-        Dict containing 'url' and 'filename'
-    """
-    # Generate random 8-character string
-    random_str = generate_random_string(8)
+    logger.debug("Uploading image: key=%s size=%d ct=%s", s3_key, len(content), content_type)
+    await _put_object(s3_key, content, content_type)
 
-    # Create folder name: RANDOM_8_CHARS-USER_ID-USERNAME
-    folder_name = f"{random_str}-{user_id}-{username}"
-
-    # Get subfolder based on image type
-    subfolder = get_subfolder(image_type)
-
-    # Generate unique filename
-    file_extension = image.filename.split(".")[-1] if "." in image.filename else "jpg"
-    unique_filename = f"{uuid.uuid4()}.{file_extension}"
-
-    # Full S3 key
-    s3_key = f"{folder_name}/{subfolder}/{unique_filename}"
-
-    # Read image content
-    image_content = await image.read()
-
-    # Create S3 client
-    s3_client_kwargs = {
-        "aws_access_key_id": settings.aws_access_key_id,
-        "aws_secret_access_key": settings.aws_secret_access_key,
-    }
-
-    # Use Cloudflare R2 endpoint if provided
-    if settings.storage_endpoint_url:
-        s3_client_kwargs["endpoint_url"] = settings.storage_endpoint_url
-        s3_client_kwargs["region_name"] = "auto"  # Cloudflare R2 uses 'auto' region
-    else:
-        s3_client_kwargs["region_name"] = settings.aws_region
-
-    s3_client = boto3.client("s3", **s3_client_kwargs)
-
-    # Upload to S3
-    s3_client.put_object(
-        Bucket=settings.aws_s3_bucket_name,
-        Key=s3_key,
-        Body=image_content,
-        ContentType=image.content_type or "image/jpeg",
-    )
-
-    # Generate public URL using custom domain
-    image_url = f"{settings.storage_base_url}/{s3_key}"
-
-    return {"url": image_url, "filename": unique_filename}
+    url = f"{settings.storage_base_url}/{s3_key}"
+    return {"url": url, "filename": s3_key.rsplit("/", 1)[-1]}
 
 
 async def upload_media(
-    user_id: int, username: str, media_type: str, media: UploadFile
+    user_id: int,
+    username: str,
+    media_type: str,
+    media: UploadFile,
 ) -> Dict[str, str]:
-    """
-    Upload media (image or video) to S3 storage for messages.
+    """Upload chat media (image or video) to S3; returns ``{"url": ..., "filename": ...}``."""
+    subfolder = _MEDIA_SUBFOLDER.get(media_type, "uploads")
+    default_ext = "jpg" if media_type == "image" else "mp4"
+    ext = _ext_from_filename(media.filename, default_ext)
+    s3_key = f"{subfolder}/{user_id}-{_safe(username)}/{uuid.uuid4()}.{ext}"
 
-    Args:
-        user_id: The user's ID
-        username: The user's username
-        media_type: The type of media ('image' or 'video')
-        media: The uploaded media file
-
-    Returns:
-        Dict containing 'url' and 'filename'
-    """
-    # Generate random 8-character string
-    random_str = generate_random_string(8)
-
-    # Create folder name: RANDOM_8_CHARS-USER_ID-USERNAME
-    folder_name = f"{random_str}-{user_id}-{username}"
-
-    # Get subfolder based on media type
-    subfolder = get_media_subfolder(media_type)
-
-    # Generate unique filename
-    file_extension = (
-        media.filename.split(".")[-1]
-        if "." in media.filename
-        else ("jpg" if media_type == "image" else "mp4")
-    )
-    unique_filename = f"{uuid.uuid4()}.{file_extension}"
-
-    # Full S3 key
-    s3_key = f"{folder_name}/{subfolder}/{unique_filename}"
-
-    # Read media content
-    media_content = await media.read()
-
-    # Create S3 client
-    s3_client_kwargs = {
-        "aws_access_key_id": settings.aws_access_key_id,
-        "aws_secret_access_key": settings.aws_secret_access_key,
-    }
-
-    # Use Cloudflare R2 endpoint if provided
-    if settings.storage_endpoint_url:
-        s3_client_kwargs["endpoint_url"] = settings.storage_endpoint_url
-        s3_client_kwargs["region_name"] = "auto"  # Cloudflare R2 uses 'auto' region
-    else:
-        s3_client_kwargs["region_name"] = settings.aws_region
-
-    s3_client = boto3.client("s3", **s3_client_kwargs)
-
-    # Determine content type
+    content = await media.read()
     if media_type == "image":
         content_type = media.content_type or "image/jpeg"
-    elif media_type == "video":
-        content_type = media.content_type or "video/mp4"
     else:
-        content_type = media.content_type or "application/octet-stream"
+        content_type = media.content_type or "video/mp4"
 
-    # Upload to S3
-    s3_client.put_object(
-        Bucket=settings.aws_s3_bucket_name,
-        Key=s3_key,
-        Body=media_content,
-        ContentType=content_type,
-    )
+    logger.debug("Uploading media: key=%s size=%d ct=%s", s3_key, len(content), content_type)
+    await _put_object(s3_key, content, content_type)
 
-    # Generate public URL using custom domain
-    media_url = f"{settings.storage_base_url}/{s3_key}"
-
-    return {"url": media_url, "filename": unique_filename}
+    url = f"{settings.storage_base_url}/{s3_key}"
+    return {"url": url, "filename": s3_key.rsplit("/", 1)[-1]}

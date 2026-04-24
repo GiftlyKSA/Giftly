@@ -1,4 +1,4 @@
-from .admin import *
+from .auth import *
 from .shared import *
 
 __all__ = [

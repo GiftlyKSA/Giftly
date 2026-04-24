@@ -1,12 +1,14 @@
 import hashlib
+import hmac
 import json
 import logging
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,14 +34,18 @@ from utils.database.config import settings
 from utils.database.database import get_db
 from utils.rate_limit import make_ip_rate_limiter
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
-# Paylink callback rate limiting (per IP, in-memory)
+# Rate limiters — values come from settings (configurable via .env)
 # ---------------------------------------------------------------------------
 
 _callback_timestamps: dict[str, list[float]] = defaultdict(list)
-_payment_rate_limit = make_ip_rate_limiter(20, 60)
+_payment_rate_limit = make_ip_rate_limiter(
+    settings.rate_limit_payment_create_per_minute, 60
+)
 
 
 def _check_callback_rate_limit(client_ip: str) -> None:
@@ -49,6 +55,20 @@ def _check_callback_rate_limit(client_ip: str) -> None:
     _callback_timestamps[client_ip] = valid
     if len(valid) >= settings.paylink_callback_rate_limit_per_minute:
         raise HTTPException(status_code=429, detail="Too many requests")
+    _callback_timestamps[client_ip] = valid + [now]
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schema for Paylink webhook payload
+# ---------------------------------------------------------------------------
+
+class PaylinkCallbackPayload(BaseModel):
+    transactionNo: Optional[str] = None
+    orderNumber: Optional[str] = None
+    orderStatus: Optional[str] = None
+    status: Optional[str] = None
+
+    model_config = {"extra": "allow"}  # Paylink may add extra fields
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -172,7 +192,7 @@ async def create_payment(
             ) as paylink:
                 resp = await paylink.create_invoice(
                     {
-                        "amount": payment_data.amount / 100,
+                        "amount": round(payment_data.amount / 100, 2),
                         "currency": "SAR",
                         "description": f"Invoice {invoice.invoice_id}",
                         "customer": {
@@ -212,7 +232,7 @@ async def create_payment(
 
 @router.post("/paylink-callback")
 async def paylink_callback(
-    payload: dict,
+    payload: PaylinkCallbackPayload,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
@@ -223,23 +243,34 @@ async def paylink_callback(
     client_ip = request.client.host if request.client else "unknown"
     _check_callback_rate_limit(client_ip)
 
-    transaction_no = str(
-        payload.get("transactionNo") or payload.get("orderNumber") or ""
-    )
-    paylink_status = str(
-        payload.get("orderStatus") or payload.get("status") or ""
-    ).lower()
+    # HMAC signature verification — enforced when PAYLINK_WEBHOOK_SECRET is set
+    if settings.paylink_webhook_secret:
+        raw_body = await request.body()
+        expected_sig = hmac.new(
+            settings.paylink_webhook_secret.encode(),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+        received_sig = request.headers.get("x-paylink-signature", "")
+        if not hmac.compare_digest(expected_sig, received_sig):
+            logger.warning(
+                "paylink_callback signature mismatch from=%s transaction=%s",
+                client_ip,
+                payload.transactionNo or payload.orderNumber,
+            )
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    payload_hash = hashlib.sha256(
-        json.dumps(payload, sort_keys=True).encode()
-    ).hexdigest()
-    logging.info(
-        "paylink_callback from=%s transaction=%s status=%s hash=%s",
-        client_ip, transaction_no, paylink_status, payload_hash,
+    transaction_no = str(payload.transactionNo or payload.orderNumber or "")
+    paylink_status = str(payload.orderStatus or payload.status or "").lower()
+
+    logger.info(
+        "paylink_callback from=%s transaction=%s status=%s",
+        client_ip, transaction_no, paylink_status,
     )
 
     if not transaction_no:
-        raise HTTPException(status_code=400, detail="Missing transactionNo")
+        logger.warning("paylink_callback received with no transaction number from=%s", client_ip)
+        raise HTTPException(status_code=400, detail="Missing transaction number")
 
     # Find the pending payment by transaction_id OR by id (wallet top-up uses payment.id as orderNumber)
     result = await db.execute(
@@ -315,15 +346,23 @@ async def paylink_callback(
             invoice = payment.invoice
             payer = payment.user
             if invoice and payer:
-                result4 = await db.execute(
-                    select(func.sum(Payment.amount)).where(
-                        Payment.invoice_id == invoice.id,
-                        Payment.status == PaymentStatus.COMPLETED,
+                try:
+                    result4 = await db.execute(
+                        select(func.sum(Payment.amount)).where(
+                            Payment.invoice_id == invoice.id,
+                            Payment.status == PaymentStatus.COMPLETED,
+                        )
                     )
-                )
-                total_paid = result4.scalar() or 0
-                if total_paid >= invoice.full_amount:
-                    await _mark_invoice_paid(invoice, total_paid, payer, db)
+                    total_paid = result4.scalar() or 0
+                    if total_paid >= invoice.full_amount:
+                        await _mark_invoice_paid(invoice, total_paid, payer, db)
+                except Exception:
+                    logger.exception(
+                        "paylink_callback: invoice processing failed "
+                        "payment=%s invoice=%s transaction=%s",
+                        payment.id, invoice.id, transaction_no,
+                    )
+                    raise
 
         # Wallet top-up: credit atomically to prevent double-credit race condition
         else:

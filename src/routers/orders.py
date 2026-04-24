@@ -844,12 +844,22 @@ async def update_order_status(
         valid_next = next_allowed.value if next_allowed else "none (use /complete)"
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot transition from '{order.status.value}' to '{new_status_value}'. "
-                   f"Next allowed: '{valid_next}'",
+            detail=f"Cannot move order from '{order.status.value}' to '{new_status_value}'. "
+                   f"Next allowed status: '{valid_next}'",
         )
 
-    order.status = new_status
-    order.updated_at = datetime.now(timezone.utc)
+    # Atomic conditional update — prevents two simultaneous requests from skipping a step
+    current_status = order.status
+    atomic = await db.execute(
+        update(Order)
+        .where(Order.order_id == order_id, Order.status == current_status)
+        .values(status=new_status, updated_at=datetime.now(timezone.utc))
+    )
+    if atomic.rowcount == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Order status was changed by another request. Please refresh and retry.",
+        )
     await db.commit()
     await db.refresh(order)
 

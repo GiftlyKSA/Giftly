@@ -39,6 +39,10 @@ from sqladmin import Admin as SQLAdmin
 from sqlalchemy import select
 from utils.websocket.websocket_manager import manager
 
+from utils.logging_config import configure_logging
+
+configure_logging(debug=settings.debug)
+
 import tasks.email_tasks  # noqa: F401 — registers task decorators with the broker
 from middleware.activity import LastActivityMiddleware
 from middleware.logging import RequestLoggingMiddleware

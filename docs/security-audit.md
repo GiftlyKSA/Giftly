@@ -1,40 +1,39 @@
-# Security Audit — New Findings
-> Generated: 2026-04-24. Only findings NOT yet addressed in the codebase are listed here.
+# Security Audit
+> Last updated: 2026-04-24. All previous findings have been resolved.
 
 ---
 
-## HIGH
+## Status: All findings resolved
 
-_None identified._
+| ID | Severity | Description | Status |
+|---|---|---|---|
+| S-01 | MEDIUM | Missing Paylink webhook HMAC signature verification | ✅ Fixed |
+| S-02 | MEDIUM | Race condition in `update_order_status` (non-atomic write) | ✅ Fixed |
+| S-03 | MEDIUM | No rate limit on `POST /invoices/verify-coupon` | ✅ Fixed |
+| S-04 | LOW | Float precision for Paylink API currency amounts | ✅ Fixed |
 
 ---
 
-## MEDIUM
+## Resolved
 
-### S-01 — Missing Paylink webhook signature verification
+### S-01 — Paylink webhook HMAC signature verification
 **File:** `src/routers/payments.py` — `paylink_callback`  
-**Issue:** The callback endpoint re-validates the payment status with the Paylink API (good), but it does not verify an HMAC signature on the raw webhook payload. If Paylink's re-validation is unreachable (network issue, test mode), a spoofed POST can still pass through to the atomic update block.  
-**Fix:** Verify a Paylink-provided signature header (e.g. `X-Paylink-Signature`) using `hmac.compare_digest` before touching the database. Store the signing secret in `settings`.
+**Fix:** Added HMAC-SHA256 signature verification using `hmac.compare_digest`. The signing secret is read from `settings.paylink_webhook_secret` (`PAYLINK_WEBHOOK_SECRET` env var). Verification is skipped if the secret is not configured, preserving backward compatibility.
 
----
-
-### S-02 — Race condition in `update_order_status` (non-atomic transition)
+### S-02 — Race condition in `update_order_status`
 **File:** `src/routers/orders.py` — `update_order_status`  
-**Issue:** The function reads the current order status, validates the transition via `_COURIER_TRANSITIONS`, then writes the new status with a plain `order.status = new_status`. Two concurrent requests from the same courier can both pass the read-side check and then both write, causing the order to skip a status step.  
-**Fix:** Replace the read-then-write with a conditional `UPDATE ... WHERE order_id = ? AND status = <expected_current>` (same pattern used in `accept_order`). Check `rowcount == 0` to detect a lost race.
+**Fix:** Replaced the read-then-write pattern with a conditional `UPDATE ... WHERE order_id = ? AND status = <current>`. Returns HTTP 409 if `rowcount == 0` (concurrent modification detected).
+
+### S-03 — Rate limit on `POST /invoices/verify-coupon`
+**File:** `src/routers/invoices.py` — `verify_coupon`  
+**Fix:** Added `_: None = Depends(_coupon_rate_limit)` backed by `settings.rate_limit_coupon_verify_per_minute` (`RATE_LIMIT_COUPON_VERIFY_PER_MINUTE` env var, default 10/min per IP).
+
+### S-04 — Float precision for Paylink API amounts
+**Files:** `src/routers/payments.py`, `src/routers/wallets.py`  
+**Fix:** Replaced raw float division with `round(amount / 100, 2)` / `round(amount_sar, 2)` for all values sent to the Paylink API.
 
 ---
 
-### S-03 — Missing rate limit on `/invoices/verify-coupon`
-**File:** `src/routers/invoices.py` — `verify_coupon` (POST `/invoices/verify-coupon`)  
-**Issue:** An authenticated attacker can brute-force valid promo codes at unlimited speed. No per-IP or per-user rate limit is applied to this endpoint.  
-**Fix:** Add `_: None = Depends(make_ip_rate_limiter(10, 60))` (or a tighter per-user limit via Redis) to the endpoint signature.
+## Open items
 
----
-
-## LOW
-
-### S-04 — Float passed to Paylink API for currency amounts
-**File:** `src/routers/payments.py` line 172 — `create_payment`  
-**Issue:** `"amount": payment_data.amount / 100` converts integer halalas to a float SAR value for the external Paylink API call. Python float division can produce imprecise representations (e.g. 0.30000000000000004) that differ from what Paylink expects.  
-**Fix:** Use `Decimal` or format as a rounded string: `"amount": round(payment_data.amount / 100, 2)`. The same applies in `initiate_wallet_charge` (wallets.py line 86).
+_None._

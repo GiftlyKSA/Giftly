@@ -134,6 +134,14 @@ Copy `.env.example` to `.env` and fill in real values. Settings are validated at
 | `SMS_PROVIDER_ENABLED` | `false` | Set true once `utils/clients/sms.py` is wired to a real provider |
 | `DEBUG` | `false` | Enables `/auth/dev/otp` for testing without an SMS provider |
 | `PAYLINK_API_KEY` / `PAYLINK_TEST_MODE` / `PAYLINK_CALLBACK_URL` / `PAYLINK_RETURN_URL` | — / `true` / — / — | Paylink.sa payment gateway |
+| `PAYLINK_WEBHOOK_SECRET` | — | HMAC-SHA256 secret for verifying Paylink callback signatures |
+| `WALLET_CHARGE_MIN_SAR` | `10` | Minimum customer wallet top-up (SAR) |
+| `WALLET_CHARGE_MAX_SAR` | `1000` | Maximum customer wallet top-up (SAR) |
+| `ADMIN_WALLET_CHARGE_MAX_HALALAS` | `1000000` | Maximum admin wallet credit (halalas) |
+| `RATE_LIMIT_PAYMENT_CREATE_PER_MINUTE` | `20` | Per-IP rate limit for payment creation |
+| `RATE_LIMIT_WALLET_CHARGE_PER_MINUTE` | `5` | Per-IP rate limit for wallet top-ups |
+| `RATE_LIMIT_COUPON_VERIFY_PER_MINUTE` | `10` | Per-IP rate limit for coupon verification |
+| `CHAT_CONVERSATIONS_MAX_LIMIT` | `100` | Max page size for listing conversations |
 | `HSTS_MAX_AGE_SECONDS` | `31536000` | Strict-Transport-Security header value |
 
 ## Money
@@ -168,6 +176,6 @@ uv run pytest -k "promocode and not expired"          # by keyword
 
 ## Notes
 
-- `Base.metadata.create_all` runs at startup — there is no Alembic migration runtime. Add Alembic if you need destructive schema changes against existing data.
+- Schema is managed by **Alembic** — `Base.metadata.create_all` is **not** called at startup. Apply migrations with `uv run alembic upgrade head` before running the server for the first time (or after pulling new model changes).
 - Mock external clients in tests by patching the **import site** (e.g. `routers.auth.send_sms`), not the source module.
 - `mcp.json` historically contained a committed GitHub token. Rotate and purge from history before publishing.

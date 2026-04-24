@@ -17,9 +17,13 @@ from models import Invoice, InvoiceStatus, Order, OrderStatus, Promocode, Promoc
 from models.enums import UserRole
 from schemas import CreateInvoice, InvoiceResponse
 from utils.auth.auth import get_current_user
+from utils.database.config import settings
 from utils.database.database import get_db
+from utils.rate_limit import make_ip_rate_limiter
 
 router = APIRouter()
+
+_coupon_rate_limit = make_ip_rate_limiter(settings.rate_limit_coupon_verify_per_minute, 60)
 
 
 @router.post("/courier/create", response_model=InvoiceResponse)
@@ -382,6 +386,7 @@ async def verify_coupon(
     invoice_id: int = Form(..., ge=1),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(_coupon_rate_limit),
 ):
     """
     Verify coupon code and calculate discount for an invoice.
